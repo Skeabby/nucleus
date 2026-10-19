@@ -265,6 +265,31 @@
 > TS 156 → 163 (app-kit 33 → 40: lock suite + double-instance). `apps/launcher` + `packages/launcher` (TS)
 > are now formally legacy surfaces and marked deprecated in their READMEs.
 
+> **Update #17 (2026-10-19) — Craft UI (interlude milestone): the apps get the launcher's chrome.**
+> Both app frontends were rewritten to the reference design language (distilled from the ArtCraft
+> conventions — organize-page cards, docked panels, command palette, mono status bars — re-implemented
+> from scratch, no code copied): a shared **`craft.css` design system** ships in `@nucleus/app-kit/kit`
+> (tokens `--c-*` mirroring the launcher palette, light/dark via `data-theme` with system-preference
+> fallback, app shell = toolstrip + rail/canvas/inspector + status bar, hard edges, hairlines, one
+> accent per app via `--nk-app-accent`). A **⌘K command palette** joins the web kit (`kit.js`):
+> it reads `GET /api/describe` once, filters every bus command as you type, and builds an inline
+> params form straight from the command's JSON Schema (strings/numbers/booleans; arrays via JSON or
+> comma lists) — so *every keyboard-driven action goes through `/api/op` exactly like an agent's*
+> (§3 philosophy: human and agent drive the same bus). **PDF Workbench** becomes an "Organize pages"
+> workbench: sources rail (import + per-source filtering), page cards with thumbnails (pdf.js,
+> lazy via IntersectionObserver), click/ctrl/shift selection, batch rotate/remove as labelled
+> one-step-each command sequences, drag-to-reorder (drop computes the post-removal insert index),
+> a sticky selection bar, an inspector (page props / selection / document), zoom S/M/L,
+> file drop-import, and a mono status bar. **Notes** becomes a three-pane editor: rich note rows
+> (title + snippet + relative date, newest first), search strip, Write/Split/Read modes (Ctrl+E
+> cycles) with a live debounced markdown preview, a writer's insert toolbar (H2/B/I/code/lists/
+> quote/link/snippet, Ctrl+B/I), an inspector (created/updated/words/chars/lines/node id) and the
+> F4 save-generations logic kept verbatim. Kit components (scrubber, review drawer, toasts, SSE
+> refresh) are untouched and co-exist with the new chrome; all bus/server/core code and schemas
+> are untouched (no new commands, no state changes). Gates: `npm run verify` PASS; TS suites
+> unchanged at **163** (frontends remain unmeshed vanilla JS); app smoke checks PASS for all three
+> servers; Rust untouched (126).
+
 **Codename:** `nucleus` · monorepo root `nucleus` · packages `@nucleus/*`
 
 ---
