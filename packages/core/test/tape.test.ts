@@ -127,6 +127,22 @@ describe("The tape (M1 §3.1 core): records, replay, seek, restore, fork", () =>
     expect(doc.nodes["n2"]?.props).toEqual({ i: 1, x: 1 });
   });
 
+  it("importTape seeds the timeline across restarts (app-kit restore)", () => {
+    const { doc, bus } = setup(0);
+    bus.invoke("doc.addNode", doc, { type: "x" });
+    bus.invoke("doc.removeNode", doc, { id: "n1" });
+    const records = bus.tapeRecords();
+    expect(records.map((r) => r.seq)).toEqual([1, 2]);
+    // a "new" process: fresh bus, records replayed from persistence
+    const fresh = new CommandBus();
+    fresh.importTape(records);
+    expect(fresh.tapeRecords().map((r) => r.seq)).toEqual([1, 2]);
+    expect(fresh.tapeRecords().at(-1)?.command).toBe("doc.removeNode");
+    // a re-import replaces, not appends
+    fresh.importTape([]);
+    expect(fresh.tapeRecords()).toHaveLength(0);
+  });
+
   it("restoring to the last seq is a no-op", () => {
     const { doc, bus } = setup();
     const last = (bus.tapeRecords().at(-1) as TapeRecord).seq;

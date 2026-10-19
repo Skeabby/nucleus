@@ -215,6 +215,18 @@ export class CommandBus {
   }
 
   /**
+   * Seed the tape from persisted records (app-kit restore). History/undo is
+   * NOT rebuilt: undo only spans the current session, but the tape timeline
+   * (scrubber, seek, restore, fork) keeps working across restarts.
+   */
+  importTape(records: readonly TapeRecord[]): void {
+    this.#tape.length = 0;
+    for (const record of records) this.#tape.push(record);
+    const last = this.#tape[this.#tape.length - 1];
+    this.#seq = last ? last.seq : 0;
+  }
+
+  /**
    * Run one command. Validation → CAS → run → apply → history + tape + event.
    * Inside `transaction()` the frame absorbs the patches and the caller gets an
    * ordinary result; history/tape are touched once at commit.
