@@ -4,49 +4,117 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>PDF Workbench — Nucleus</title>
-    <link rel="stylesheet" href="/style.css" />
     <link rel="stylesheet" href="/_kit/kit.css" />
+    <link rel="stylesheet" href="/_kit/craft.css" />
+    <style>
+      /* App accent: workbench violet (kit may inject --nk-accent at runtime). */
+      :root { --nk-app-accent: #6d5ef8; }
+    </style>
+    <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
-    <header class="topbar">
-      <div class="brand">
-        <span class="dot"></span>
-        <strong>PDF&nbsp;Workbench</strong>
-        <span class="sub">Creative&nbsp;Nucleus</span>
+    <div class="c-app">
+
+      <!-- ── Toolstrip ─────────────────────────────────────────────── -->
+      <header class="c-strip">
+        <div class="c-brand">
+          <span class="c-brand__mark"></span>
+          <span class="c-brand__name">PDF&nbsp;Workbench</span>
+          <span class="c-brand__sub">nucleus</span>
+        </div>
+
+        <span class="c-tsep"></span>
+
+        <div class="c-tgroup">
+          <label class="c-btn" for="file-input" title="Import PDF files (drag &amp; drop too)">+ Add PDFs</label>
+          <input id="file-input" type="file" accept="application/pdf" multiple hidden />
+          <label class="c-btn" for="project-input" title="Open a saved project">Open project</label>
+          <input id="project-input" type="file" accept=".json,application/json" hidden />
+          <button class="c-btn" id="save" title="Download the project (.nucleus.json)">Save project</button>
+          <button class="c-btn" id="reset" title="Start over">Reset</button>
+        </div>
+
+        <span class="c-tsep"></span>
+
+        <div class="c-tgroup">
+          <button class="c-btn c-btn--icon" id="undo" title="Undo (Ctrl+Z)" disabled>↶</button>
+          <button class="c-btn c-btn--icon" id="redo" title="Redo (Ctrl+Shift+Z)" disabled>↷</button>
+        </div>
+
+        <span class="c-tsep"></span>
+
+        <div class="c-tgroup" id="page-tools">
+          <button class="c-btn" id="rot-left" title="Rotate selection 90° left" disabled>↺ Rotate</button>
+          <button class="c-btn" id="rot-right" title="Rotate selection 90° right" disabled>↻ Rotate</button>
+          <button class="c-btn c-btn--danger" id="remove" title="Remove selection (Del)" disabled>✕ Remove</button>
+        </div>
+
+        <div class="c-strip__spring"></div>
+
+        <button class="c-btn" id="palette" title="Command palette (Ctrl+K)">⌘K Commands</button>
+        <button class="c-btn c-btn--accent" id="export" title="Download the assembled PDF">Export PDF</button>
+      </header>
+
+      <!-- ── Main: sources · canvas · inspector ────────────────────── -->
+      <div class="c-main">
+
+        <aside class="c-rail">
+          <div class="c-panelhead"><span>Sources</span><span class="c-chip" id="sources-count">0</span></div>
+          <div class="c-rail__body" id="sources">
+            <!-- filled by app.js -->
+          </div>
+          <div class="c-rail__foot">
+            <button class="c-btn c-btn--icon" id="add-rail" title="Add PDFs">+</button>
+            <label class="c-btn" for="file-input" style="flex:1; text-align:center">Import…</label>
+          </div>
+        </aside>
+
+        <main class="c-canvas" id="dropzone">
+          <div id="empty" class="c-empty" style="padding:40px">
+            <div class="c-empty__kick">01 / organize</div>
+            <h1>Your pages, assembled.</h1>
+            <p>Drop PDFs anywhere — then reorder, rotate and export, every step reversible.</p>
+            <p class="c-empty__hint"><kbd>Ctrl</kbd>+<kbd>K</kbd> commands · <kbd>Delete</kbd> removes selection · everything stays on your machine.</p>
+          </div>
+          <div id="canvasbody" style="display:none">
+            <div class="c-canvasbar" id="canvasbar">
+              <span class="c-chip" id="sel-chip">0 selected</span>
+              <button class="c-btn c-btn--icon" id="bar-rot-l" title="Rotate selection left" disabled>↺</button>
+              <button class="c-btn c-btn--icon" id="bar-rot-r" title="Rotate selection right" disabled>↻</button>
+              <button class="c-btn c-btn--icon c-btn--danger" id="bar-remove" title="Remove selection" disabled>✕</button>
+              <button class="c-btn c-btn--icon" id="bar-clear" title="Clear selection" disabled>Clear</button>
+              <span class="c-strip__spring"></span>
+              <div class="c-seg c-zoom-seg" id="zoom-seg" title="Card size">
+                <button data-zoom="s" aria-pressed="false">S</button>
+                <button data-zoom="m" aria-pressed="true">M</button>
+                <button data-zoom="l" aria-pressed="false">L</button>
+              </div>
+            </div>
+            <div id="grid" class="c-cardslist"></div>
+          </div>
+        </main>
+
+        <aside class="c-inspector">
+          <div class="c-panelhead"><span>Inspector</span></div>
+          <div class="c-inspector__body" id="inspector">
+            <!-- filled by app.js -->
+          </div>
+          <div class="c-inspector__foot">
+            <span class="c-chip" id="bus-chip">human</span>
+            <span style="font-size:11px;color:var(--c-faint)">every action is a bus command</span>
+          </div>
+        </aside>
       </div>
-      <div class="actions">
-        <label class="btn primary" for="file-input">+ Add PDFs</label>
-        <input id="file-input" type="file" accept="application/pdf" multiple hidden />
 
-        <span class="divider"></span>
-
-        <button class="btn" id="undo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
-        <button class="btn" id="redo" title="Redo (Ctrl+Shift+Z)" disabled>↷ Redo</button>
-
-        <span class="divider"></span>
-
-        <button class="btn" id="save" title="Download a .nucleus.json project">Save</button>
-        <label class="btn" for="project-input" title="Open a saved project">Open</label>
-        <input id="project-input" type="file" accept=".json,application/json" hidden />
-        <button class="btn" id="reset" title="Start over">Reset</button>
-
-        <button class="btn accent" id="export" title="Download the result">Export PDF</button>
-      </div>
-    </header>
-
-    <main id="dropzone">
-      <div id="empty" class="empty">
-        <h1>Your pages, assembled.</h1>
-        <p>Drop PDFs here, or click <b>Add PDFs</b>. Then reorder, rotate, delete, and export.</p>
-        <p class="hint">Drag cards to reorder · Ctrl+Z to undo · everything stays on your machine.</p>
-      </div>
-      <div id="grid" class="grid"></div>
-    </main>
-
-    <footer class="status">
-      <span id="status">Ready</span>
-      <span id="counter"></span>
-    </footer>
+      <!-- ── Status bar ────────────────────────────────────────────── -->
+      <footer class="c-status">
+        <span class="c-dot" id="dot"></span>
+        <span id="status">Ready</span>
+        <span class="c-status__spring"></span>
+        <span id="counter"></span>
+        <span>⌘K commands · Ctrl+Z undo</span>
+      </footer>
+    </div>
 
     <script type="module" src="/app.js"></script>
     <script src="/_kit/kit.js" defer></script>

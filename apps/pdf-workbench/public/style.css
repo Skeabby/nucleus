@@ -1,143 +1,26 @@
-:root {
-  --bg: #0f1116;
-  --panel: #171a21;
-  --card: #1d2129;
-  --line: #2a2f3a;
-  --text: #e6e9ef;
-  --muted: #8b93a7;
-  --accent: #5b8cff;
-  --accent-2: #ff7a59;
+/* PDF Workbench — app-specific visuals. The chrome lives in /_kit/craft.css. */
+
+.c-zoom-seg { margin-right: 6px; }
+.c-zoom-seg > button { padding: 5px 8px; font-family: var(--c-mono); font-size: 10px; }
+
+/* Source rows in the rail reuse craft.c-row; add derive cue */
+.c-row .c-row__count { font-family: var(--c-mono); font-size: 10px; color: var(--c-faint); }
+.c-row[aria-current="true"] { border-left-color: var(--c-cyan, #22d3ee); }
+
+/* Empty help block inside inspector */
+.c-help { padding: 10px var(--c-rail-pad); }
+.c-help p { margin: 0 0 8px; color: var(--c-muted); font-size: 11.5px; }
+.c-help p b { color: var(--c-text); }
+
+/* Card thumb sizing */
+.c-cardslist { --thumb-w: 180px; }
+.c-cardslist[data-zoom="s"] { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; }
+.c-cardslist[data-zoom="m"] { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 18px; }
+.c-cardslist[data-zoom="l"] { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 22px; }
+.card-drag-image { opacity: 0.85; }
+
+/* Drop feedback when dragging PDF files over the canvas */
+.c-canvas.--dragover {
+  outline: 1px dashed var(--c-accent);
+  outline-offset: -6px;
 }
-
-* { box-sizing: border-box; }
-
-body {
-  margin: 0;
-  font: 14px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif;
-  background: var(--bg);
-  color: var(--text);
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-}
-
-.topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px 20px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--line);
-  position: sticky;
-  top: 0;
-  z-index: 10;
-}
-
-.brand { display: flex; align-items: center; gap: 10px; font-size: 15px; }
-.brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px var(--accent); }
-.brand .sub { color: var(--muted); font-weight: 400; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; }
-
-.actions { display: flex; gap: 8px; flex-wrap: wrap; }
-
-.btn {
-  border: 1px solid var(--line);
-  background: var(--card);
-  color: var(--text);
-  padding: 7px 14px;
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 13px;
-  transition: .15s;
-}
-.btn:hover { border-color: var(--accent); transform: translateY(-1px); }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-.btn.accent { background: var(--accent-2); border-color: var(--accent-2); color: #1a0f0a; font-weight: 600; }
-.btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
-
-.divider { width: 1px; align-self: stretch; background: var(--line); margin: 0 4px; }
-
-main { flex: 1; padding: 24px; }
-
-.empty { text-align: center; margin: 12vh auto 0; max-width: 520px; }
-.empty h1 { font-size: 34px; margin: 0 0 10px; }
-.empty p { color: var(--muted); margin: 6px 0; }
-.empty .hint { font-size: 12px; }
-
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 16px;
-}
-
-.card {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  transition: .15s;
-  cursor: grab;
-}
-.card:hover { border-color: var(--accent); }
-.card.dragging { opacity: .4; }
-.card .thumb {
-  aspect-ratio: 1 / 1.414;
-  background: linear-gradient(160deg, #22262f, #171a21);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-  overflow: hidden;
-}
-.card .thumb-img {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  transform-origin: center;
-  padding: 6px;
-  transition: transform .18s;
-}
-.card .page-no { font-size: 40px; font-weight: 700; color: #3a4150; }
-.card .rot-badge {
-  position: absolute;
-  top: 8px; right: 8px;
-  background: rgba(91,140,255,.18);
-  border: 1px solid var(--accent);
-  color: var(--accent);
-  font-size: 11px;
-  padding: 2px 7px;
-  border-radius: 999px;
-}
-.card .rot-badge[data-deg="0"] { display: none; }
-.card .meta { padding: 8px 10px; font-size: 11px; color: var(--muted); display: flex; justify-content: space-between; gap: 6px; }
-.card .meta .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.card .tools { display: flex; border-top: 1px solid var(--line); }
-.card .tools button {
-  flex: 1;
-  background: transparent;
-  border: 0;
-  border-right: 1px solid var(--line);
-  color: var(--muted);
-  padding: 8px 0;
-  cursor: pointer;
-  font-size: 14px;
-}
-.card .tools button:last-child { border-right: 0; }
-.card .tools button:hover { background: #232833; color: var(--text); }
-.card .tools button.danger:hover { background: #3a1f24; color: #ff6b6b; }
-
-.status {
-  display: flex;
-  justify-content: space-between;
-  padding: 8px 20px;
-  border-top: 1px solid var(--line);
-  background: var(--panel);
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.dragover { outline: 2px dashed var(--accent); outline-offset: -12px; }
