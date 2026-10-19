@@ -61,7 +61,11 @@ SetupIconFile={#SrcIcon}
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+; Checked by default on purpose: the desktop shortcut is part of a normal
+; install (interactive box pre-ticked and /VERYSILENT runs create it too,
+; since silent installs only process *selected* tasks). Users who do not
+; want it can untick the box or pass /TASKS with the task name omitted.
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
 Source: "{#SrcExe}"; DestDir: "{app}"; Flags: ignoreversion

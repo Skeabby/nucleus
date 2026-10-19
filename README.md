@@ -86,8 +86,10 @@ to install? Grab the portable `nucleus-launcher-v0.4.0-alpha-win64.zip` from the
 > release) predates it and has no installer.
 
 1. **Run the installer** (`NucleusSetup-<version>-win64.exe`). It needs no administrator rights.
-2. **Launch Nucleus** from the Start Menu (or the desktop shortcut, if you ticked that box), pick an
-   app and click **Open** — it starts on a free port in its own window.
+2. **Launch Nucleus** from the Start Menu or the desktop shortcut — both are
+   created by default (untick the desktop-shortcut box during setup if you do
+   not want it), pick an app and click **Open** — it starts on a free port in
+   its own window.
 3. **To remove it**: **Settings → Apps → Nucleus → Uninstall**, or run
    `powershell -ExecutionPolicy Bypass -File scripts\uninstall-nucleus.ps1`.
 
