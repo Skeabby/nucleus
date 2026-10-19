@@ -16,7 +16,7 @@
 // pack step archives it as-is. Build → bundle → pack.
 
 import { build } from "esbuild";
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { cpSync, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
@@ -76,9 +76,10 @@ for (const app of apps) {
     logLevel: "warning",
   });
   console.log(`bundle-apps: ${path.relative(repoRoot, app.appDir)} → dist/server.js (${((await stat(app.entry)).size / 1024).toFixed(0)} KiB${result.warnings.length ? `, ${result.warnings.length} warning(s)` : ""})`);
-}
 
-async function stat(file) {
-  const { stat } = await import("node:fs/promises");
-  return stat(file);
+  // The shared web kit (review drawer, tape scrubber, toasts) ships inside the
+  // payload as static assets: /_kit/* resolves from publicDir first.
+  cpSync(path.join(repoRoot, "packages", "app-kit", "kit"), path.join(app.appDir, "public", "_kit"), {
+    recursive: true,
+  });
 }

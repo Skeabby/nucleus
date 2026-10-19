@@ -5,6 +5,7 @@
   "type": "module",
   "main": "./dist/server.js",
   "dependencies": {
+    "@nucleus/app-kit": "*",
     "@nucleus/control": "*",
     "@nucleus/core": "*",
     "@nucleus/pdf": "*",
