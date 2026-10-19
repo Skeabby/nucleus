@@ -1329,7 +1329,7 @@ checksum = "2bf50223579dc7cdcfb3bfcacf7069ff68243f8c363f62ffa99cf000a6b9c451"
 
 [[package]]
 name = "nucleus-launcher"
-version = "0.4.0-alpha"
+version = "0.4.1-alpha"
 dependencies = [
  "eframe",
  "egui",
@@ -1346,7 +1346,7 @@ dependencies = [
 
 [[package]]
 name = "nucleus-launcher-core"
-version = "0.4.0-alpha"
+version = "0.4.1-alpha"
 dependencies = [
  "semver",
  "serde",
