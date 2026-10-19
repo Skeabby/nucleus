@@ -1,0 +1,121 @@
+name: Publish (rolling latest)
+
+# Builds the suite on every push to main (code + apps only — prose docs do
+# not trigger it) and republishes the rolling `latest` release:
+#
+#   launcher-rs     cargo build → gen-catalog → cargo build (embed catalog)
+#   installers      make-setup (Inno Setup via choco, portable ZIP fallback)
+#   release         tag `latest` recreated with catalog.json + *.nucleusapp
+#                   + NucleusSetup-<v>-win64.exe (+ portable ZIP)
+#
+# Installed launchers point at releases/latest/download/catalog.json, so the
+# next start picks the new suite up automatically (see updater.rs): apps ship
+# updates when their manifest version bumps, the launcher when the workspace
+# version bumps.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "launcher-rs/**"
+      - "apps/**"
+      - "packages/**"
+      - "scripts/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/release.yml"
+
+concurrency:
+  group: publish-latest
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: Skeabby/nucleus
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Workspaces
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Gate (verify)
+        run: npm run verify
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: launcher-rs
+
+      # Pass 1 builds the CLI used to stamp the catalogue; pass 2 embeds it
+      # into the shipped exe (include_str! on mirror/catalog.json).
+      - name: Launcher build (1/2)
+        run: cargo build --release
+        working-directory: launcher-rs
+
+      - name: Bundle apps
+        run: npm run bundle:apps
+
+      - name: Pack app archives
+        shell: pwsh
+        run: |
+          $exe = "launcher-rs\target\release\nucleus-launcher.exe"
+          New-Item -ItemType Directory -Force -Path launcher-rs\mirror\apps | Out-Null
+          Get-ChildItem apps -Directory | ForEach-Object {
+            $app = $_.FullName
+            if (-not (Test-Path (Join-Path $app "nucleus.app.json"))) { return }
+            $id = ($_ | Get-Content (Join-Path $app "nucleus.app.json") | ConvertFrom-Json).id
+            $ver = ($_ | Get-Content (Join-Path $app "nucleus.app.json") | ConvertFrom-Json).version
+            & $exe --pack $app --out ("launcher-rs\mirror\apps\{0}-{1}-win64.nucleusapp" -f $id, $ver)
+            if ($LASTEXITCODE -ne 0) { throw "pack failed for $id" }
+          }
+
+      - name: Generate catalogue
+        shell: pwsh
+        run: |
+          launcher-rs\target\release\nucleus-launcher.exe `
+            --gen-catalog launcher-rs\mirror\apps `
+            --out launcher-rs\mirror\catalog.json `
+            --base-url "https://github.com/$env:REPO/releases/latest/download/"
+
+      - name: Launcher build (2/2 — embeds the catalogue)
+        run: cargo build --release
+        working-directory: launcher-rs
+
+      - name: Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Installers (setup exe + portable zip)
+        run: powershell -ExecutionPolicy Bypass -File scripts\make-setup.ps1
+
+      - name: Upload build artifacts (insurance)
+        uses: actions/upload-artifact@v4
+        with:
+          name: suite-build
+          path: dist/*
+
+      - name: Republish the rolling latest release
+        shell: pwsh
+        run: |
+          gh release delete latest --yes --cleanup-tag 2>$null
+          git push origin :refs/tags/latest 2>$null
+          $files = @(
+            Get-Item "dist\NucleusSetup-*win64.exe" -ErrorAction SilentlyContinue
+            Get-Item "dist\Nucleus-*-win64-portable.zip" -ErrorAction SilentlyContinue
+            Get-Item "launcher-rs\mirror\catalog.json"
+            Get-Item "launcher-rs\mirror\apps\*.nucleusapp"
+          ) | Where-Object { $_ } | ForEach-Object { $_.FullName }
+          if (-not $files) { throw "no release assets matched" }
+          gh release create latest --target main `
+            --title "Nucleus Suite (latest)" `
+            --notes "Automated build of main ($(Get-Date -AsUTC -Format 'yyyy-MM-ddTHH:mm:ssZ')). Installed launchers self-update from this release." `
+            @files
