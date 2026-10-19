@@ -16,7 +16,8 @@
 // pack step archives it as-is. Build → bundle → pack.
 
 import { build } from "esbuild";
-import { cpSync, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { cpSync } from "node:fs";
+import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 

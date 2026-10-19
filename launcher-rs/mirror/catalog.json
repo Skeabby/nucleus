@@ -4,25 +4,25 @@
       "channel": "stable",
       "id": "nucleus.notes",
       "name": "Notes",
-      "releaseAsset": "nucleus.notes-0.1.1-win64.nucleusapp",
+      "releaseAsset": "nucleus.notes-0.2.0-win64.nucleusapp",
       "repo": "Skeabby/nucleus",
-      "sha256": "368efa11169c2c2972e9f9fd3d2f4c78038d10d54d912963c17b00c0b0fc647b",
-      "size": 25623,
-      "url": "https://github.com/Skeabby/nucleus/releases/download/apps-v0.1.1/nucleus.notes-0.1.1-win64.nucleusapp",
-      "version": "0.1.1"
+      "sha256": "991940c995cda97ea800588429d81e29421678caff334f114d2ff802b0fa5cf9",
+      "size": 38313,
+      "url": "https://github.com/Skeabby/nucleus/releases/download/apps-v0.2.0/nucleus.notes-0.2.0-win64.nucleusapp",
+      "version": "0.2.0"
     },
     {
       "channel": "stable",
       "id": "nucleus.pdf-workbench",
       "name": "PDF Workbench",
-      "releaseAsset": "nucleus.pdf-workbench-0.1.1-win64.nucleusapp",
+      "releaseAsset": "nucleus.pdf-workbench-0.2.0-win64.nucleusapp",
       "repo": "Skeabby/nucleus",
-      "sha256": "4857c3392103cfe23b72aeacdaabf1e58ac698a6cb000403140836e70d8988e3",
-      "size": 888892,
-      "url": "https://github.com/Skeabby/nucleus/releases/download/apps-v0.1.1/nucleus.pdf-workbench-0.1.1-win64.nucleusapp",
-      "version": "0.1.1"
+      "sha256": "0f497403f93f47d5ab78d21c29a36aa8149f4e344ad2abf181c5e4bf2235d44d",
+      "size": 901560,
+      "url": "https://github.com/Skeabby/nucleus/releases/download/apps-v0.2.0/nucleus.pdf-workbench-0.2.0-win64.nucleusapp",
+      "version": "0.2.0"
     }
   ],
-  "generatedAt": "2026-10-19T13:57:46Z",
-  "suiteVersion": "0.4.0-alpha"
+  "generatedAt": "2026-10-19T15:26:53Z",
+  "suiteVersion": "0.4.1-alpha"
 }

@@ -1,7 +1,7 @@
 {
   "id": "nucleus.pdf-workbench",
   "name": "PDF Workbench",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "coreApiVersion": "1",
   "description": "Merge, reorder, rotate and export PDF pages.",
   "author": "Nucleus",

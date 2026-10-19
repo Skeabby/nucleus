@@ -1,9 +1,8 @@
 {
   "id": "nucleus.notes",
   "name": "Notes",
-  "version": "0.1.1",
-  "coreApiVersion": "1",
-  "description": "Markdown notes, notebooks and full-text search.",
+  "version": "0.2.0",
+  "coreApiVersion": "1",  "description": "Markdown notes, notebooks and full-text search.",
   "author": "Nucleus",
   "category": "text",
   "status": "alpha",
