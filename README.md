@@ -82,9 +82,6 @@ and you are done. No Node build, no checkout, no admin prompt — it is a per-us
 to install? Grab the portable `nucleus-launcher-v0.4.0-alpha-win64.zip` from the same release and run
 `nucleus-launcher.exe` from wherever you unzip it.
 
-> The installer ships with the `v0.4.0-alpha` **pre-release**; the stable `v0.3.0` (the "Latest"
-> release) predates it and has no installer.
-
 1. **Run the installer** (`NucleusSetup-<version>-win64.exe`). It needs no administrator rights.
 2. **Launch Nucleus** from the Start Menu or the desktop shortcut — both are
    created by default (untick the desktop-shortcut box during setup if you do
@@ -253,7 +250,8 @@ in this README has a command behind it.
 The phased plan, design decisions and risks live in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 Where we are: the native Rust launcher + first three apps (**done**), cross-app federation, and the
 full `.nucleusapp` catalogue loop — bundle builder, catalogue generator, verified install / update /
-remove in both the CLI and the UI, with an offline (no-network) test — **shipped as `v0.4.0-alpha`**.
+remove in both the CLI and the UI, with an offline (no-network) test — **shipped, and available as
+the [Latest release](https://github.com/Skeabby/nucleus/releases/latest) (`v0.4.0-alpha`)**.
 The committed catalogue already points at two published app bundles
 ([`apps-v0.1.0`](https://github.com/Skeabby/nucleus/releases/tag/apps-v0.1.0)), so a released
 launcher installs them on a machine with no checkout. Next: build the **Image Editor** (the second
