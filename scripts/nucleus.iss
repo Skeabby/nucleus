@@ -69,6 +69,15 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "{#SrcExe}"; DestDir: "{app}"; Flags: ignoreversion
+; The native window shell + icon ship next to the launcher so Open runs real
+; WebView2 windows on catalogue-only machines too (no repo checkout). Both are
+; optional build outputs, guarded the same way the setup icon is.
+#if FileExists(AddBackslash(ScriptDir) + "..\assets\nucleus-shell.exe")
+Source: "{#ScriptDir}..\assets\nucleus-shell.exe"; DestDir: "{app}"; Flags: ignoreversion
+#endif
+#if FileExists(AddBackslash(ScriptDir) + "..\assets\nucleus.ico")
+Source: "{#ScriptDir}..\assets\nucleus.ico"; DestDir: "{app}"; Flags: ignoreversion
+#endif
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"

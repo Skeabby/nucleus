@@ -164,6 +164,28 @@
 > schemas, F12 non-deterministic ids, F13 PDF-only MCP, F14 duplicated HTTP boilerplate, F15 PDF
 > gaps) are tracked for their milestones, not silently dropped.
 
+> **Update #13 (2026-10-19) — the Open bug: bundles that run anywhere, failures that speak up.**
+> Three user-facing fixes landed together. **(1)** Published `.nucleusapp` archives shipped an
+> unbundled `dist/server.js` importing workspace packages with no `node_modules`, so on any machine
+> without the checkout the server died instantly with `ERR_MODULE_NOT_FOUND` and **Open looked
+> broken**; apps are now bundled self-contained at pack time (`npm run bundle:apps`, esbuild, node
+> built-ins external), and `pack.rs` **refuses** a server payload that still imports `@nucleus/*`
+> — the guard has tests. Bundles republished as **`apps-v0.1.1`** from audited source
+> (loopback-only + token guard; the v0.1.0 ones predated the audit).
+> **(2)** A node process that dies before readiness used to surf as a silent 20 s timeout and one
+> faint footer line: `spawn_node` pipes stderr, a tail-reader thread keeps the last bytes without
+> ever blocking the child, and `reconcile()` now reports `Event::Failed` **immediately** with exit
+> code + stderr tail; `Running.ready` splits "died during launch" from "stopped", and a test spawns
+> a server that exits with code 3 and asserts the fast failure.
+> **(3)** `nucleus-shell.exe` + `nucleus.ico` resolve **next to the launcher exe** too
+> (`paths.rs`), and both ship in the installer and the portable ZIP (`nucleus.iss`, `make-setup.ps1`)
+> — catalogue-only machines get native WebView2 app windows instead of a browser fallback.
+> Also this day: the installer creates the desktop shortcut by default; GitHub releases cleaned to
+> one launcher release (`v0.4.0-alpha`, now *Latest*, no pre-release flag) + one bundle release;
+> `README.md` rewritten, `CONTRIBUTING.md`, issue/PR templates and repo description/topics added.
+> Verification: `cargo fmt --check`, `clippy -D warnings` clean, **109 tests**  green; `npm run build && npm run bundle:apps && npm run check:apps` PASS for all three server apps; shipped
+> payload re-verified from extracted archive.
+
 **Codename:** `nucleus` · monorepo root `nucleus` · packages `@nucleus/*`
 
 ---

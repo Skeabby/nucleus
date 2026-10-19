@@ -64,6 +64,12 @@ pub fn random_token() -> String {
 /// Spawn an app's node server with `PORT` and `NUCLEUS_TOKEN` set. Node runs
 /// hidden; killing the returned process tree (taskkill `/T`) cleans up
 /// everything it spawned.
+///
+/// `stderr` is **piped**: the runtime keeps only its tail (see
+/// `spawn_stderr_tail`), so when node dies instantly, the failure surfaces
+/// with the real reason instead of a silent 20 s probe timeout. `stdout`
+/// stays null: servers are chatty by design and an unread pipe would
+/// deadlock them.
 pub fn spawn_node(
     node_path: &str,
     args: &[String],
@@ -80,7 +86,7 @@ pub fn spawn_node(
             .env("NUCLEUS_TOKEN", token)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP)
             .spawn()
     }

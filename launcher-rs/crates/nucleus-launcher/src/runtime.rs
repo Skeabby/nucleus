@@ -56,6 +56,14 @@ struct Running {
     window_pid: Option<u32>,
     port: Option<u16>,
     url: Option<String>,
+    /// True once the readiness probe answered  the app is genuinely up.
+    /// A node process that exits while this is still false is a launch
+    /// failure (reported with its stderr tail), not a mere stop.
+    ready: bool,
+    /// Last bytes of the node process' stderr, kept live by a reader
+    /// thread. `None` for url/command kinds and for legacy spawns without
+    /// a piped stderr.
+    stderr_tail: Option<Arc<Mutex<String>>>,
 }
 
 impl Running {
@@ -140,6 +148,8 @@ impl Runtime {
                     window_pid: None,
                     port: None,
                     url: None,
+                    ready: true,
+                    stderr_tail: None,
                 });
                 notify(Event::Ready(id_ready, String::new()));
             }
@@ -156,7 +166,7 @@ impl Runtime {
                     .clone()
                     .unwrap_or_else(|| node_or_literal(&config));
                 let token = random_token();
-                let child =
+                let mut child =
                     spawn_node(&command, &spec.args, &app.dir, port, &token).map_err(|err| {
                         notify(Event::Failed(
                             id.clone(),
@@ -164,6 +174,10 @@ impl Runtime {
                         ));
                         format!("failed to spawn node for `{id}`: {err}")
                     })?;
+                // Hand the piped stderr to a tail reader so it can never fill
+                // its pipe and block the app, and so an instant death
+                //  surfaces with its real cause.
+                let stderr_tail = child.stderr.take().map(spawn_stderr_tail);
                 let pid = child.id();
                 // The token rides in the URL only for the first load; the app
                 // swaps it for an HttpOnly cookie and redirects to the clean URL.
@@ -179,6 +193,8 @@ impl Runtime {
                     window_pid: None,
                     port: Some(port),
                     url: Some(url.clone()),
+                    ready: false,
+                    stderr_tail,
                 });
 
                 // Probe in the background so the UI stays responsive; the
@@ -236,6 +252,8 @@ impl Runtime {
                     window_pid,
                     port: None,
                     url: Some(url.clone()),
+                    ready: true,
+                    stderr_tail: None,
                 });
                 notify(Event::Ready(id_ready, url));
             }
@@ -296,17 +314,29 @@ impl Runtime {
 
     /// Reap exited processes so a closed window or a crashed node auto-stops
     /// the app. Call once per UI frame.
+    ///
+    /// A node process that dies **before** the readiness probe answered is a
+    /// launch failure , not a stop: it is reported as `Failed`
+    /// immediately, with the exit code and the stderr tail, instead of the
+    /// silent 20 s probe timeout that used to read as "Open does nothing".
     pub fn reconcile(&self) {
         let mut guard = self.inner.lock().unwrap();
         let mut index = 0;
         let mut stopped = Vec::new();
+        let mut failed = Vec::new();
         while index < guard.running.len() {
-            let node_exited = exited(&mut guard.running[index].node);
-            let window_exited = exited(&mut guard.running[index].window);
+            let entry = &mut guard.running[index];
+            let node_exited = exited(&mut entry.node);
+            let window_exited = exited(&mut entry.window);
             if node_exited || window_exited {
-                let entry = guard.running.remove(index);
+                let mut entry = guard.running.remove(index);
+                let failure = (!entry.ready).then(|| launch_failure_message(&mut entry));
                 entry.kill_all();
-                stopped.push(entry.id);
+                if let Some(message) = failure {
+                    failed.push((entry.id.clone(), message));
+                } else {
+                    stopped.push(entry.id);
+                }
             } else {
                 index += 1;
             }
@@ -314,6 +344,9 @@ impl Runtime {
         drop(guard);
         for id in stopped {
             let _ = self.tx.send(Event::Stopped(id));
+        }
+        for (id, message) in failed {
+            let _ = self.tx.send(Event::Failed(id, message));
         }
     }
 
@@ -338,6 +371,7 @@ impl Runtime {
         let mut guard = self.inner.lock().unwrap();
         let position = guard.running.iter().position(|entry| entry.id == id)?;
         let entry = &mut guard.running[position];
+        entry.ready = true;
         if want_window
             && let Some(window) = open_app_window(
                 url,
@@ -382,6 +416,70 @@ fn exited(child: &mut Option<Child>) -> bool {
         .as_mut()
         .map(|child| child.try_wait().ok().flatten().is_some())
         .unwrap_or(false)
+}
+
+/// Exit code of a process that has already exited (`None` = still running,
+/// or exited without a code — signal death).
+fn exit_code(child: &mut Option<Child>) -> Option<i32> {
+    child
+        .as_mut()
+        .and_then(|child| child.try_wait().ok().flatten())
+        .and_then(|status| status.code())
+}
+
+/// Why a not-yet-ready node death happened, for the user.
+fn launch_failure_message(entry: &mut Running) -> String {
+    let code_text = match exit_code(&mut entry.node) {
+        Some(code) => format!("exit code {code}"),
+        None => "an abnormal termination".to_string(),
+    };
+    let mut message = format!(
+        "`{}` failed to launch: node exited with {code_text} \
+         before its HTTP surface answered the readiness probe",
+        entry.id
+    );
+    let tail = entry
+        .stderr_tail
+        .as_ref()
+        .and_then(|tail| tail.lock().ok().map(|tail| tail.clone()))
+        .unwrap_or_default();
+    if !tail.trim().is_empty() {
+        // keep it readable in the footer log: last ~600 chars
+        let start = tail
+            .char_indices()
+            .rev()
+            .nth(600)
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        message.push_str(&format!(" — stderr: {}", &tail[start..]));
+    }
+    message
+}
+
+/// Keep the last `KEEP` bytes of a child's stderr without ever blocking the
+/// child (a full pipe deadlocks it). Runs on its own thread until EOF.
+fn spawn_stderr_tail<R: std::io::Read + Send + 'static>(mut reader: R) -> Arc<Mutex<String>> {
+    const KEEP: usize = 4096;
+    let tail = Arc::new(Mutex::new(String::new()));
+    let slot = Arc::clone(&tail);
+    std::thread::spawn(move || {
+        let mut recent: Vec<u8> = Vec::new();
+        let mut buf = [0u8; 1024];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    recent.extend_from_slice(&buf[..n]);
+                    if recent.len() > KEEP {
+                        recent.drain(..recent.len() - KEEP);
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        *slot.lock().unwrap() = String::from_utf8_lossy(&recent).into_owned();
+    });
+    tail
 }
 
 fn node_or_literal(config: &RuntimeConfig) -> String {
@@ -458,5 +556,63 @@ mod tests {
         assert_eq!(runtime.running_count(), 1);
         runtime.stop_all();
         assert_eq!(runtime.running_count(), 0);
+    }
+
+    /// A node server that dies instantly (a bad entry, a missing module…) must
+    /// surface as `Failed` **immediately** on the next `reconcile()` — exit
+    /// code + stderr tail included — instead of the silent 20 s readiness
+    /// timeout. This is the "Open does nothing" bug guard. Needs a node on
+    /// PATH like `spawn_node_then_kill_tree`.
+    #[test]
+    fn server_that_dies_instantly_fails_fast_with_stderr() {
+        if std::env::var("NUCLEUS_SKIP_PROC_TESTS").is_ok() {
+            return;
+        }
+        let node = crate::process::known_node();
+        if node.is_none() {
+            eprintln!("node not found; skipping");
+            return;
+        }
+        let app = AppMeta {
+            manifest: parse_manifest(
+                r#"{"id":"nucleus.dying","name":"Dying","version":"0.1.0","coreApiVersion":"1","launch":{"kind":"server","args":["-e","console.error('kaboom'); process.exit(3);"],"readyPath":"/api/state"}}"#,
+            )
+            .expect("valid"),
+            dir: std::env::temp_dir(),
+            manifest_path: std::env::temp_dir().join("nucleus.app.json"),
+            source: AppSource::Repo,
+            installed: None,
+            catalog: None,
+        };
+
+        let (runtime, rx) = Runtime::new(config());
+        runtime.launch(&app).unwrap();
+
+        // pump the engine the way the UI does, until the failure lands
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut failed: Option<Event> = None;
+        while std::time::Instant::now() < deadline {
+            runtime.reconcile();
+            if let Ok(event) = rx.try_recv()
+                && matches!(event, Event::Failed(..))
+            {
+                failed = Some(event);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+
+        match failed {
+            Some(Event::Failed(id, message)) => {
+                assert_eq!(id, "nucleus.dying");
+                assert!(message.contains("exit code 3"), "got: {message}");
+                assert!(message.contains("kaboom"), "stderr tail missing: {message}");
+            }
+            other => panic!("expected a fast Failed event, got {other:?}"),
+        }
+        assert!(
+            !runtime.is_running("nucleus.dying"),
+            "the dead app must be forgotten from the runtime"
+        );
     }
 }

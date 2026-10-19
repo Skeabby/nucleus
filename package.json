@@ -43,12 +43,15 @@
     "mcp": "node packages/control-mcp/dist/index.js",
     "mcp:federation": "node packages/control-federation/dist/mcp.js",
     "demo:cross-app": "node packages/control-federation/dist/demo.js",
+    "bundle:apps": "node scripts/bundle-apps.mjs",
+    "check:apps": "node scripts/check-bundled-app.mjs apps/notes && node scripts/check-bundled-app.mjs apps/pdf-workbench && node scripts/check-bundled-app.mjs apps/launcher",
     "shell": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-shell.ps1",
     "shell:fetch": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/fetch-webview2.ps1",
     "shortcut": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-shortcut.ps1"
   },
   "devDependencies": {
     "@types/node": ">=22.0.0",
+    "esbuild": "0.28.2",
     "turbo": "^2.11.7",
     "typescript": "^7.0.2",
     "vitest": "^5.0.3"

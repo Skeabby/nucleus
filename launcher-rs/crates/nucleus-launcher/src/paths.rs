@@ -52,18 +52,17 @@ impl Paths {
         }
         app_roots.push(user_apps.clone());
 
-        let (shell_exe, icon_ico) = match &repo_root {
-            Some(root) => {
-                let assets = root.join("assets");
-                let shell = assets.join("nucleus-shell.exe");
-                let icon = assets.join("nucleus.ico");
-                (
-                    shell.is_file().then_some(shell),
-                    icon.is_file().then_some(icon),
-                )
-            }
-            None => (None, None),
-        };
+        // A released launcher installs next to neither a repo nor its assets:
+        // the shell and the icon are shipped alongside the exe (installer
+        // `%LOCALAPPDATA%\Programs\Nucleus`, portable ZIP root). Resolving
+        // them there keeps native app windows — not a browser fallback — on
+        // catalogue-only machines too.
+        let (repo_shell, repo_icon) = repo_root
+            .as_ref()
+            .map(|root| asset_candidates(root.join("assets")))
+            .unwrap_or((None, None));
+        let (local_shell, local_icon) = asset_candidates(local_exe_dir());
+        let (shell_exe, icon_ico) = (repo_shell.or(local_shell), repo_icon.or(local_icon));
 
         Ok(Paths {
             repo_root,
@@ -84,6 +83,24 @@ pub fn nucleus_data_dir() -> PathBuf {
             .unwrap_or_else(|_| PathBuf::from("."))
     });
     root.join("Nucleus")
+}
+
+/// Directory containing the running launcher (its exe's folder): where the
+/// installer and the portable ZIP ship `nucleus-shell.exe` + `nucleus.ico`.
+fn local_exe_dir() -> PathBuf {
+    let mut exe = env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
+    exe.pop();
+    exe
+}
+
+/// Look for `nucleus-shell.exe` / `nucleus.ico` in one candidate directory.
+fn asset_candidates(dir: PathBuf) -> (Option<PathBuf>, Option<PathBuf>) {
+    let shell = dir.join("nucleus-shell.exe");
+    let icon = dir.join("nucleus.ico");
+    (
+        shell.is_file().then_some(shell),
+        icon.is_file().then_some(icon),
+    )
 }
 
 /// Walk up from the current directory, then from the executable, looking for a

@@ -80,6 +80,15 @@ function New-PortableZip {
     Copy-Item -LiteralPath $exe -Destination (Join-Path $staging "nucleus-launcher.exe") -Force
     Copy-Item -LiteralPath $uninstallScript -Destination (Join-Path $staging "uninstall-nucleus.ps1") -Force
 
+    # Ship the native window shell + icon next to the launcher so Open starts
+    # real WebView2 windows on machines without the repo checkout.
+    foreach ($asset in @("nucleus-shell.exe", "nucleus.ico")) {
+        $source = Join-Path $repo "assets\$asset"
+        if (Test-Path -LiteralPath $source) {
+            Copy-Item -LiteralPath $source -Destination (Join-Path $staging $asset) -Force
+        }
+    }
+
     $readme = @"
 Nucleus $Version - portable (Windows x64)
 =================================================

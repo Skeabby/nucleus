@@ -11,7 +11,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use nucleus_launcher_core::verify::{DIGESTS_FILE, sha256_hex};
-use nucleus_launcher_core::{ManifestError, parse_manifest};
+use nucleus_launcher_core::{LaunchKind, ManifestError, parse_manifest};
 use thiserror::Error;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
@@ -42,6 +42,11 @@ pub enum PackError {
 
     #[error("no payload files found under `{0}`")]
     EmptyPayload(String),
+
+    #[error(
+        "payload cannot run outside this repo: `{0}` still imports workspace packages (`@nucleus/*`) — bundle the apps first (`npm run build && npm run bundle:apps`) and pack again"
+    )]
+    Unbundled(String),
 }
 
 /// A successful pack.
@@ -68,6 +73,35 @@ pub fn pack_app_dir(dir: &Path, out: &Path) -> Result<PackOutcome, PackError> {
     files.sort();
     if files.is_empty() {
         return Err(PackError::EmptyPayload(dir.display().to_string()));
+    }
+
+    // Guard against shipping an app that can only run inside this repo: the
+    // archive deliberately excludes `node_modules`, so a server entry that
+    // still imports `@nucleus/*` dies instantly with ERR_MODULE_NOT_FOUND on
+    // an installed machine (the silent "Open does nothing" of the first
+    // bundle release). The pack pipeline must bundle
+    // (`npm run bundle:apps`) before packing.
+    if let Some(spec) = manifest.launch_spec()
+        && spec.kind == LaunchKind::Server
+    {
+        let entry_arg = spec.args.first().cloned().unwrap_or_default();
+        if !entry_arg.is_empty() {
+            let entry = dir.join(entry_arg.replace('/', "\\"));
+            if entry.is_file() {
+                let bytes = fs::read(&entry)?;
+                if find_subslice(&bytes, b"\"@nucleus/").is_some()
+                    || find_subslice(&bytes, b"'@nucleus/").is_some()
+                {
+                    return Err(PackError::Unbundled(
+                        entry
+                            .strip_prefix(dir)
+                            .unwrap_or(&entry)
+                            .display()
+                            .to_string(),
+                    ));
+                }
+            }
+        }
     }
 
     if let Some(parent) = out.parent()
@@ -149,6 +183,15 @@ struct Cataloged {
     asset: String,
     sha256: String,
     size: u64,
+}
+
+/// Naive byte-substring search (tiny haystacks, no new dependency).
+fn find_subslice(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || hay.len() < needle.len() {
+        return None;
+    }
+    hay.windows(needle.len())
+        .position(|window| window == needle)
 }
 
 /// Generate a `catalog.json` from every `*.nucleusapp` in `archives_dir`.
@@ -354,6 +397,33 @@ mod tests {
         assert_eq!(civil_from_days(-1), (1969, 12, 31));
         assert!(now_iso8601().ends_with('Z'));
         assert_eq!(now_iso8601().len(), 20);
+    }
+
+    /// A server payload whose entry still imports `@nucleus/*` cannot run
+    /// outside this monorepo (no node_modules goes into the archive): it must
+    /// be refused at pack time, pointing at the bundling step.
+    #[test]
+    fn rejects_a_payload_that_still_imports_workspace_packages() {
+        let root = scratch("unbundled");
+        let app = sample_app(&root);
+        fs::write(
+            app.join("dist/server.js"),
+            "import { createNotesSession } from \"@nucleus/notes\";\n",
+        )
+        .unwrap();
+        let out = root.join("notes.nucleusapp");
+        assert!(matches!(
+            pack_app_dir(&app, &out),
+            Err(PackError::Unbundled(_))
+        ));
+        // Same file, bundled form: no workspace import anywhere → pack works.
+        fs::write(
+            app.join("dist/server.js"),
+            "import { readFile } from \"node:fs/promises\";\n",
+        )
+        .unwrap();
+        assert!(pack_app_dir(&app, &out).is_ok());
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

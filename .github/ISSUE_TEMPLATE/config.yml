@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or discussion
+    url: https://github.com/Skeabby/nucleus/discussions
+    about: Ask before opening an issue if you are unsure it is a real bug.
