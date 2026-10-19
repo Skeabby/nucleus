@@ -10,6 +10,12 @@ use nucleus_launcher_core::{
 
 use crate::paths::Paths;
 
+/// The launcher's own app manifest — the TS launcher UI kept in
+/// `apps/launcher/` (it also hosts `roadmap.json`). It must never surface as a
+/// card: you cannot open the launcher from the launcher, and "uninstalling"
+/// it would be nonsense. The folder stays in the repo; the grid just skips it.
+pub const LAUNCHER_SELF_ID: &str = "nucleus.launcher";
+
 /// The result of discovery: app cards, roadmap cards and any non-fatal errors
 /// encountered along the way (an unreadable manifest is skipped, never fatal).
 #[derive(Debug, Clone)]
@@ -101,6 +107,10 @@ pub fn discover(paths: &Paths, catalog: &Catalog) -> Discovery {
         }
         apps.push(catalogue_meta(entry, user_apps_root.join(&entry.id)));
     }
+
+    // Never list the launcher itself (see [`LAUNCHER_SELF_ID`]) — after the
+    // catalogue merge, so a future catalogue entry cannot resurrect it either.
+    apps.retain(|app| app.id() != LAUNCHER_SELF_ID);
 
     // The roadmap lives in the checkout; without one there is simply nothing
     // planned to merge, which is not an error.
@@ -254,6 +264,59 @@ mod tests {
         assert!(is_hidden(Path::new(".git")));
         assert!(is_hidden(Path::new("_wip")));
         assert!(!is_hidden(Path::new("notes")));
+    }
+
+    /// The launcher never appears in its own grid, whether found on disk or
+    /// (hypothetically) via the catalogue — the card would be circular.
+    #[test]
+    fn the_launcher_never_lists_itself() {
+        let base = std::env::temp_dir().join(format!("nucleus-self-{}", std::process::id()));
+        let repo_apps = base.join("apps");
+        std::fs::create_dir_all(repo_apps.join("launcher")).unwrap();
+        std::fs::create_dir_all(repo_apps.join("notes")).unwrap();
+        std::fs::write(
+            repo_apps.join("launcher/nucleus.app.json"),
+            r#"{"id":"nucleus.launcher","name":"Nucleus","version":"0.1.0","coreApiVersion":"1","launch":{"kind":"server","args":["dist/server.js"]}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            repo_apps.join("notes/nucleus.app.json"),
+            r#"{"id":"nucleus.notes","name":"Notes","version":"0.1.0","coreApiVersion":"1","launch":{"kind":"server","args":["dist/server.js"]}}"#,
+        )
+        .unwrap();
+        let paths = Paths {
+            repo_root: Some(base.clone()),
+            user_apps: repo_apps.clone(),
+            app_roots: vec![repo_apps.clone()],
+            window_profiles_dir: base.join("profiles"),
+            shell_exe: None,
+            icon_ico: None,
+        };
+        // Even a catalogue entry for the launcher must not resurrect the card.
+        let catalog = nucleus_launcher_core::Catalog {
+            suite_version: "0.4.0-alpha".into(),
+            generated_at: None,
+            apps: vec![CatalogEntry {
+                id: LAUNCHER_SELF_ID.into(),
+                repo: "Skeabby/nucleus".into(),
+                release_asset: "nucleus.launcher.nucleusapp".into(),
+                sha256: Some("0".repeat(64)),
+                version: Some("0.1.0".into()),
+                url: None,
+                name: Some("Nucleus".into()),
+                channel: None,
+            }],
+        };
+
+        let discovery = discover(&paths, &catalog);
+        assert!(
+            discovery.app(LAUNCHER_SELF_ID).is_none(),
+            "the launcher must not list itself"
+        );
+        assert!(discovery.card(LAUNCHER_SELF_ID).is_none());
+        assert!(discovery.app("nucleus.notes").is_some(), "real apps stay");
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
