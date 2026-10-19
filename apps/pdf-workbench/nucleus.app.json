@@ -1,7 +1,7 @@
 {
   "id": "nucleus.pdf-workbench",
   "name": "PDF Workbench",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "coreApiVersion": "1",
   "description": "Merge, reorder, rotate and export PDF pages.",
   "author": "Nucleus",
@@ -11,12 +11,19 @@
   "icon": "icon.svg",
   "launch": {
     "kind": "server",
-    "args": ["dist/server.js"],
+    "args": [
+      "dist/server.js"
+    ],
     "window": true,
     "readyPath": "/api/state"
   },
-  "permissions": ["fs"],
-  "capabilities": ["pdf.edit", "pdf.export"],
+  "permissions": [
+    "fs"
+  ],
+  "capabilities": [
+    "pdf.edit",
+    "pdf.export"
+  ],
   "minShell": "0.1.0",
   "updateChannel": "stable"
 }
