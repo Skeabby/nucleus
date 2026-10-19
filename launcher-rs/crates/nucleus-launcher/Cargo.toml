@@ -23,3 +23,7 @@ resvg = "0.48.1"
 sha2 = "0.10"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
+
+# Windows exe icon (invoked from build.rs; harmless on other platforms).
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"

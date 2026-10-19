@@ -79,10 +79,14 @@ Source: "{#ScriptDir}..\assets\nucleus-shell.exe"; DestDir: "{app}"; Flags: igno
 Source: "{#ScriptDir}..\assets\nucleus.ico"; DestDir: "{app}"; Flags: ignoreversion
 #endif
 
+; The icon lives in {app} (see [Files]) when staged; the code: function keeps
+; the shortcut valid even on a tree where the ico was somehow absent.
+#define IcoFn "IcoAppIcon"
+
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; IconFilename: "{code:{#IcoFn}}"
 Name: "{autoprograms}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon; IconFilename: "{code:{#IcoFn}}"
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#AppName}}"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent
@@ -121,8 +125,18 @@ begin
            mbInformation, MB_OK);
 end;
 
-function InitializeUninstall(): Boolean;
+{ {app}\nucleus.ico once staged by [Files]; empty string = default exe icon.
+  Empty must come from a real function so the icon line stays valid on any
+  install layout. }
+function IcoAppIcon(Param: String): String;
 begin
+  if FileExists(ExpandConstant('{app}\nucleus.ico')) then
+    Result := ExpandConstant('{app}\nucleus.ico')
+  else
+    Result := '';
+end;
+
+function InitializeUninstall(): Boolean;begin
   RemoveNucleusData := False;
   { Ask before touching user data; stay silent during an unattended uninstall. }
   if not UninstallSilent() then
