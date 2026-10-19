@@ -186,6 +186,29 @@
 > Verification: `cargo fmt --check`, `clippy -D warnings` clean, **109 tests**  green; `npm run build && npm run bundle:apps && npm run check:apps` PASS for all three server apps; shipped
 > payload re-verified from extracted archive.
 
+> **Update #14 (2026-10-19) — Core v2 (M1): the bus gains evidence, trust and a rewind button.**
+> This closes the core half of the audit on one sweep (`packages/core`, `packages/control`, `+@nucleus/notes`'s
+> first test suite). **Schemas (F11):** every command descriptor now carries `params`/`result` JSON-Schema
+> (a ~90-line validator in `@nucleus/core`, *no new dependency*, errors list *all* offending fields) plus
+> `examples` — `command.describe` is now a machine-readable contract for the 12 existing commands across
+> core, notes and PDF. **CAS + provenance (F10, D-protocol):** `invoke` accepts `expectedDocVersion`
+> (mismatch → `kind: "conflict"`, details carry `{expected, actual}`), an explicit `actor` and a `label`;
+> every applied change appends an attributable **tape record** `{seq, ts, actor, label, command, params,
+> docVersionAfter, redo, undo}` — replay applies the recorded *patches*, never re-runs commands (F12 held
+> harmless). **Transactions (F14):** `bus.transaction(label, actor, fn)` wraps N invokes into ONE undo
+> step and ONE tape record; failure rolls patches *and* docVersion back entirely. **Coalescing hardened:**
+> bursts only merge when the actor is the same. **Proposals (§3.2):** agent commands run dry into a
+> `Proposal` (patches + touched-node snapshots + `baseVersion`); a human `accept` applies it as a normal
+> undoable entry, `reject` discards; accepting after anyone touched the same nodes marks it **stale** and
+> returns `kind: "conflict"` — never silently overwritten. Trust policy via `needsReview` (`ask`/`writes`/
+> `autopilot`; destructive is *always* reviewed). **Time travel:** `tapeStateAt`/`replayTape` rebuild the
+> document from an empty start (patches carry full node content), a `tape.restore` *command* diffs the
+> live doc against any past seq and appends — history is never rewritten — plus a property test:
+> **replay == live state** over 60 randomized operations. The `ControlServer` surface grows accordingly
+> (`command.describe` with schemas, `command.invoke` with actor/dryRun/label/CAS, `tape.list|seek|fork|
+> restore`, `proposal.list|accept|reject|acceptAll`, `doc.snapshot`) behind the same transport-agnostic
+> `handle()`.
+
 **Codename:** `nucleus` · monorepo root `nucleus` · packages `@nucleus/*`
 
 ---

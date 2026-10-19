@@ -14,12 +14,16 @@ import {
   registerCoreCommands,
   NucleusError,
   type DocumentState,
+  type JsonSchema,
 } from "@nucleus/core";
 import { ControlServer } from "@nucleus/control";
 
 export const NOTES_APP_ID = "nucleus.notes";
 export const NOTES_PROJECT_FORMAT = "nucleus.notes.project";
 export const NOTE_TYPE = "note";
+
+const noteIdParam: JsonSchema = { type: "string", description: "Note node id." };
+const textProp = (description: string): JsonSchema => ({ type: "string", description });
 
 export function registerNoteCommands(bus: CommandBus): void {
   bus.register<{ title?: string; content?: string }, { id: string }>({
@@ -28,6 +32,15 @@ export function registerNoteCommands(bus: CommandBus): void {
     description: "Create a new note and return its id.",
     sideEffects: "write",
     reversible: true,
+    params: {
+      type: "object",
+      properties: {
+        title: textProp("Note title; defaults to \"Untitled\"."),
+        content: textProp("Markdown body; defaults to empty."),
+      },
+    },
+    result: { type: "object", required: ["id"], properties: { id: noteIdParam } },
+    examples: [{ params: { title: "Shopping", content: "- [ ] oat milk" } }],
     run(params, ctx) {
       const id = `note-${randomUUID().slice(0, 8)}`;
       const now = new Date().toISOString();
@@ -64,6 +77,16 @@ export function registerNoteCommands(bus: CommandBus): void {
     reversible: true,
     // A typing/autosave burst on the same note collapses into one undo step (F2).
     coalesce: { key: (params) => params.id, windowMs: 2000 },
+    params: {
+      type: "object",
+      required: ["id"],
+      properties: {
+        id: noteIdParam,
+        title: textProp("New title (optional — only provided fields change)."),
+        content: textProp("New markdown body (optional)."),
+      },
+    },
+    result: { type: "object", required: ["id"], properties: { id: noteIdParam } },
     run(params, ctx) {
       const node = ctx.state.nodes[params.id];
       if (!node) throw new NucleusError("not_found", `note not found: ${params.id}`);
@@ -89,6 +112,8 @@ export function registerNoteCommands(bus: CommandBus): void {
     description: "Permanently remove a note.",
     sideEffects: "destructive",
     reversible: true,
+    params: { type: "object", required: ["id"], properties: { id: noteIdParam } },
+    result: { type: "object", required: ["id"], properties: { id: noteIdParam } },
     run(params, ctx) {
       if (!ctx.state.nodes[params.id]) {
         throw new NucleusError("not_found", `note not found: ${params.id}`);
@@ -117,7 +142,8 @@ export function noteViews(state: DocumentState): NoteView[] {
     .sort((a, b) => {
       const aUpdated = String(a.props["updatedAt"] ?? "");
       const bUpdated = String(b.props["updatedAt"] ?? "");
-      return bUpdated.localeCompare(aUpdated); // newest first
+      // newest first; tie-break on creation order (same-millisecond bursts)
+      return bUpdated.localeCompare(aUpdated) || b.order - a.order;
     })
     .map((n) => ({
       id: n.id,

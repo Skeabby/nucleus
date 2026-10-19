@@ -1,4 +1,4 @@
-import { CommandBus, createDocument } from "@nucleus/core";
+import { NucleusError } from "@nucleus/core";
 import { PDFDocument } from "pdf-lib";
 import { describe, expect, it } from "vitest";
 import {
@@ -7,6 +7,30 @@ import {
   exportPdf,
   MemoryAssetStore,
 } from "../src/index.js";
+
+describe("@nucleus/pdf M1: every command is self-describing", () => {
+  it("exposes params + result schemas for every pdf.* command (F11 acceptance)", () => {
+    const { bus } = createPdfSession();
+    for (const name of ["pdf.importPages", "pdf.rotatePage", "pdf.movePage", "pdf.removePage", "pdf.stats"]) {
+      const descriptor = bus.describe(name);
+      expect(descriptor.params, `${name} has a params schema`).toBeDefined();
+      expect(descriptor.result, `${name} has a result schema`).toBeDefined();
+    }
+    expect(bus.describe("pdf.rotatePage").params?.properties.degrees.maximum).toBe(360);
+  });
+
+  it("rejects out-of-range rotation degrees through validation (F11)", () => {
+    const { bus, doc } = createPdfSession();
+    expect(() => bus.invoke("pdf.rotatePage", doc, { id: "x", degrees: 720 })).toThrowError(
+      NucleusError,
+    );
+    try {
+      bus.invoke("pdf.rotatePage", doc, { id: "x", degrees: 720 });
+    } catch (error) {
+      expect((error as NucleusError).kind).toBe("validation");
+    }
+  });
+});
 
 /** Build an N-page blank PDF fixture. */
 async function makePdf(pages: number): Promise<Uint8Array> {

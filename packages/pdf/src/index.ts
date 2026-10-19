@@ -11,6 +11,7 @@ import {
   createDocument,
   NucleusError,
   type DocumentState,
+  type JsonSchema,
   type Node,
   type Patch,
 } from "@nucleus/core";
@@ -18,6 +19,8 @@ import { degrees, PDFDocument } from "pdf-lib";
 
 export const PDF_APP_ID = "nucleus.pdf";
 export const PAGE_TYPE = "page";
+
+const pageIdParam: JsonSchema = { type: "string", description: "Page node id." };
 
 export interface AssetStore {
   get(id: string): Uint8Array | undefined;
@@ -93,6 +96,23 @@ export function registerPdfCommands(bus: CommandBus, assets: AssetStore): void {
     description: "Append pages from a loaded source PDF to the document.",
     sideEffects: "write",
     reversible: true,
+    params: {
+      type: "object",
+      required: ["sourceId", "pages"],
+      properties: {
+        sourceId: { type: "string", description: "Id of a loaded source PDF asset." },
+        pages: {
+          type: "array",
+          items: { type: "integer", minimum: 0 },
+          description: "0-based source page indices to append, in order (1-based grammar lands with §5.1).",
+        },
+      },
+    },
+    result: {
+      type: "object",
+      required: ["ids"],
+      properties: { ids: { type: "array", items: pageIdParam } },
+    },
     run(params, ctx) {
       if (!assets.has(params.sourceId)) {
         throw new NucleusError("not_found", `source not found: ${params.sourceId}`);
@@ -124,6 +144,19 @@ export function registerPdfCommands(bus: CommandBus, assets: AssetStore): void {
     description: "Rotate a page by a relative number of degrees (clockwise).",
     sideEffects: "write",
     reversible: true,
+    params: {
+      type: "object",
+      required: ["id", "degrees"],
+      properties: {
+        id: pageIdParam,
+        degrees: { type: "number", minimum: -360, maximum: 360, description: "Relative clockwise rotation." },
+      },
+    },
+    result: {
+      type: "object",
+      required: ["id", "rotation"],
+      properties: { id: pageIdParam, rotation: { type: "integer", minimum: 0, maximum: 359 } },
+    },
     run(params, ctx) {
       const node = ctx.state.nodes[params.id];
       if (!node) throw new NucleusError("not_found", `page not found: ${params.id}`);
@@ -140,6 +173,16 @@ export function registerPdfCommands(bus: CommandBus, assets: AssetStore): void {
     description: "Move a page to a new zero-based position in the document.",
     sideEffects: "write",
     reversible: true,
+    params: {
+      type: "object",
+      required: ["id", "to"],
+      properties: { id: pageIdParam, to: { type: "integer", minimum: 0 } },
+    },
+    result: {
+      type: "object",
+      required: ["id", "order"],
+      properties: { id: pageIdParam, order: { type: "integer", minimum: 0 } },
+    },
     run(params, ctx) {
       const pages = pageNodes(ctx.state);
       const from = pages.findIndex((p) => p.id === params.id);
@@ -164,6 +207,8 @@ export function registerPdfCommands(bus: CommandBus, assets: AssetStore): void {
     description: "Remove a page and close the gap in page order.",
     sideEffects: "destructive",
     reversible: true,
+    params: { type: "object", required: ["id"], properties: { id: pageIdParam } },
+    result: { type: "object", required: ["id"], properties: { id: pageIdParam } },
     run(params, ctx) {
       if (!ctx.state.nodes[params.id]) throw new NucleusError("not_found", `page not found: ${params.id}`);
       const patches: Patch[] = [{ op: "remove", nodeId: params.id }];
@@ -184,6 +229,15 @@ export function registerPdfCommands(bus: CommandBus, assets: AssetStore): void {
     description: "Read-only summary of the current page list.",
     sideEffects: "read",
     reversible: false,
+    params: { type: "object", properties: {} },
+    result: {
+      type: "object",
+      required: ["pages", "rotation"],
+      properties: {
+        pages: { type: "integer", minimum: 0 },
+        rotation: { type: "array", items: { type: "number" } },
+      },
+    },
     run(_params, ctx) {
       const pages = pageNodes(ctx.state);
       return {
