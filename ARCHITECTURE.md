@@ -209,6 +209,34 @@
 > restore`, `proposal.list|accept|reject|acceptAll`, `doc.snapshot`) behind the same transport-agnostic
 > `handle()`.
 
+> **Update #15 (2026-10-19) — App-Kit (M2): one HTTP skeleton for every app, persistence and a rewindable web kit.**
+> The audit's **F14** (both apps duplicated ~200 lines of HTTP boilerplate) and **F7** ("nothing persists")
+> are closed by a new workspace package, **`@nucleus/app-kit`**, and both apps rewritten on top of it
+> (each `server.ts` now ~90–115 lines). `createAppServer({id, name, publicDir, createSession, routes, …})`
+> provides: 127.0.0.1-only binding; the request guard **lifted out of the apps** (Host allowlist, same-origin,
+> token; content-type rule extended to `application/pdf|octet-stream` for the day §5.1 switches uploads to
+> raw binary); the `?t=`→HttpOnly-cookie handshake; and the **standard API surface** — `GET /api/state`,
+> `POST /api/op` (CAS, dryRun, actor/labels via the M1 `ControlServer`), `/api/undo|redo|reset`,
+> `GET /api/tape` + `tape/seek|restore|fork`, `GET /api/proposals` + `proposals/:id/accept|reject`,
+> `GET /api/describe` (full schema'd catalogue), `GET /api/events` — **zero-dependency SSE** with 15 s
+> heartbeats streaming `command`/`proposal`/`state` frames. **Persistence (F7):** documents autosave to
+> `%APPDATA%\Nucleus\docs\<appId>\` as `document.json` (atomic temp+rename) plus append-only `tape.jsonl`
+> (appends serialized in order; a torn last line never corrupts the good prefix); relaunch restores both
+> — undo stays session-scoped, the tape timeline survives via the new `bus.importTape` — and `/api/reset`
+> starts clean. **Legacy opens (migration):** `POST /api/project` still accepts `nucleus.project` and
+> `nucleus.notes.project` v1 files, so nothing written before this update is stranded; the same endpoint
+> keeps roundtripping those formats wholesale (base64 assets included). **`.nucleus` export:** one ZIP
+> (`document.json` manifest `nucleus.doc` v2, `tape.jsonl`, content-addressed `assets/<sha256-hex>.<pdf|bin>`)
+> built with the pre-approved `fflate`, deduped by hash. **Shared web kit:** `/_kit/kit.js|css` (vanilla,
+> launcher palette tokens) adds a **tape scrubber** (seek preview → restore/fork), a **review drawer** for
+> pending agent proposals (A/R keyboard), SSE-driven refresh and toasts; apps mount it with one script tag,
+> `createAppServer` serves `/_kit/*` from the app's `public/_kit` (bundler copies it into payloads) falling
+> back to the package copy. App-specific routes (notes' Markdown export, PDF's base64 load/export) stay in
+> the apps. Verification: `npm run verify` PASS (36 tasks incl. cross-app demo); TS suites now **156** —
+> core **68** (incl. `importTape`), control 14, notes 6, pdf 9, federation 10, launcher 16,
+> **app-kit 33** (guard lifted with its tests, e2e route/SSE/persistence/migration/ZIP suites) — Rust side
+> untouched (110 tests).
+
 **Codename:** `nucleus` · monorepo root `nucleus` · packages `@nucleus/*`
 
 ---

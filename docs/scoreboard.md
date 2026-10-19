@@ -14,13 +14,13 @@ hand: that is the difference between a claim and a measurement.
 
 | Claim | Measured | Reproduce |
 |---|---|---|
-| Build, typecheck and test tasks pass | **33 / 33** | `npm run verify` |
-| TypeScript unit tests | **132** (control 14 · control-federation 10 · core 67 · launcher 16 · notes 6 · notes-app 10 · pdf 9) | `npm run test` |
+| Build, typecheck and test tasks pass | **36 / 36** | `npm run verify` |
+| TypeScript unit tests | **156** (app-kit 33 · control 14 · control-federation 10 · core 68 · launcher 16 · notes 6 · pdf 9) | `npm run test` |
 | Apps joined into one session → unified commands | **13 commands from 2 apps** (nucleus.pdf (pdf) · nucleus.notes (notes)) | `npm run demo:cross-app` |
 | One undo path across those apps: 4 edits in 2 apps, unwound then replayed | **9 / 9 checks passed** | `npm run demo:cross-app` |
 | Export from the edited state is a readable PDF | **3 pages read back** | `npm run demo:cross-app -- --export` |
 | MCP tools on the federation server | **12** (apps_list, cmd_list, cmd_describe, cmd_invoke, state_get, undo_status, undo, redo, pdf.load, pdf.loadFile, pdf.export, notes.export) | `npm run mcp:federation` then `tools/list` |
-| Workspace packages / apps | **8 / 3** | `npm run scoreboard` |
+| Workspace packages / apps | **9 / 3** | `npm run scoreboard` |
 
 **Not claimed yet** (honesty rule — no number, no claim): PNG export of a PDF page, PDF text
 extraction, assistant permissions enforced from the manifest, a scripted demo video under 60 s.
