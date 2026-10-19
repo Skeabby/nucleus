@@ -1,0 +1,222 @@
+/* kit.css — shared app chrome (part of @nucleus/app-kit, part of §4.2).
+   Palette: launcher tokens, app accent injected per app via --app-accent.
+   Hard edges, hairlines, no glow, no hover lift, no emoji. */
+
+:root {
+  --nk-ink: #17141f;
+  --nk-surface: #211d2e;
+  --nk-panel: #2a2638;
+  --nk-text: #ece9f5;
+  --nk-muted: #9b96ad;
+  --nk-line: rgba(236, 233, 245, 0.14);
+  --nk-accent: var(--nk-violet, #6d5ef8);
+  --nk-font: "Segoe UI", system-ui, sans-serif;
+  --nk-mono: "Cascadia Code", Consolas, monospace;
+}
+
+/* Scubber ------------------------------------------------------------------ */
+
+#nk-scrubber {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9500;
+  display: none;
+  border-top: 1px solid var(--nk-line);
+  background: var(--nk-surface);
+  color: var(--nk-text);
+  font-family: var(--nk-font);
+  font-size: 12px;
+  padding: 8px 14px 10px;
+}
+
+#nk-scrubber.nk-visible {
+  display: block;
+}
+
+#nk-scrubber .nk-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#nk-scrubber input[type="range"] {
+  flex: 1;
+  accent-color: var(--nk-accent);
+}
+
+#nk-scrubber .nk-label {
+  color: var(--nk-muted);
+  font-family: var(--nk-mono);
+  white-space: nowrap;
+}
+
+#nk-scrubber button,
+#nk-review button,
+#nk-toasts button {
+  border: 1px solid var(--nk-line);
+  background: var(--nk-panel);
+  color: var(--nk-text);
+  border-radius: 0;
+  padding: 4px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+
+#nk-scrubber button.nk-primary {
+  border-color: var(--nk-accent);
+  color: var(--nk-text);
+}
+
+#nk-preview {
+  position: fixed;
+  right: 14px;
+  bottom: 52px;
+  z-index: 9500;
+  display: none;
+  max-width: 340px;
+  border: 1px solid var(--nk-line);
+  background: var(--nk-surface);
+  color: var(--nk-text);
+  font-family: var(--nk-font);
+  font-size: 12px;
+  padding: 10px 12px;
+}
+
+#nk-preview.nk-visible {
+  display: block;
+}
+
+#nk-preview h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--nk-muted);
+  font-weight: 600;
+}
+
+#nk-preview .nk-meta {
+  font-family: var(--nk-mono);
+  color: var(--nk-muted);
+}
+
+/* Review drawer (proposals) ------------------------------------------------ */
+
+#nk-review {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 320px;
+  z-index: 9600;
+  display: none;
+  flex-direction: column;
+  border-left: 1px solid var(--nk-line);
+  background: var(--nk-surface);
+  color: var(--nk-text);
+  font-family: var(--nk-font);
+  font-size: 13px;
+}
+
+#nk-review.nk-visible {
+  display: flex;
+}
+
+#nk-review header {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--nk-line);
+}
+
+#nk-review header h3 {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--nk-muted);
+  font-weight: 600;
+}
+
+#nk-review .nk-body {
+  overflow: auto;
+  flex: 1;
+  padding: 12px 14px;
+}
+
+#nk-review .nk-proposal {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--nk-line);
+  background: var(--nk-panel);
+}
+
+#nk-review .nk-proposal .nk-actor {
+  display: inline-block;
+  font-family: var(--nk-mono);
+  font-size: 11px;
+  padding: 1px 6px;
+  border: 1px solid var(--nk-cyan, #22d3ee);
+  color: var(--nk-cyan, #22d3ee);
+}
+
+#nk-review .nk-proposal .nk-cmd {
+  font-family: var(--nk-mono);
+  margin-top: 6px;
+}
+
+#nk-review .nk-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+#nk-review .nk-actions button.nk-accept {
+  border-color: var(--nk-accent);
+}
+
+#nk-review footer {
+  padding: 10px 14px;
+  border-top: 1px solid var(--nk-line);
+  color: var(--nk-muted);
+  font-size: 11px;
+}
+
+/* Toasts ------------------------------------------------------------------- */
+
+#nk-toasts {
+  position: fixed;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  z-index: 9700;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: var(--nk-font);
+  font-size: 13px;
+}
+
+#nk-toasts .nk-toast {
+  padding: 8px 14px;
+  background: var(--nk-surface);
+  color: var(--nk-text);
+  border: 1px solid var(--nk-line);
+  animation: nk-toast-in 120ms linear;
+}
+
+#nk-toasts .nk-toast.nk-error {
+  border-color: var(--nk-red, #e85a6c);
+  color: var(--nk-red, #e85a6c);
+}
+
+@keyframes nk-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
