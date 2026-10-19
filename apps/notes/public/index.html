@@ -4,92 +4,121 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Notes — Nucleus</title>
-    <link rel="stylesheet" href="/style.css" />
     <link rel="stylesheet" href="/_kit/kit.css" />
+    <link rel="stylesheet" href="/_kit/craft.css" />
+    <style>
+      :root { --nk-app-accent: #3ecf8e; }
+    </style>
+    <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
+    <div class="c-app">
 
-    <div class="layout">
-
-      <!-- ── Sidebar ─────────────────────────────────────────── -->
-      <aside class="sidebar">
-        <header class="sidebar-header">
-          <div class="brand">
-            <span class="dot"></span>
-            <strong>Notes</strong>
-            <span class="sub">Nucleus</span>
-          </div>
-          <button class="btn-new" id="new-note" title="New note (Ctrl+N)">+</button>
-        </header>
-
-        <div class="search-wrap">
-          <input
-            class="search"
-            id="search"
-            type="search"
-            placeholder="Search notes…"
-            autocomplete="off"
-            spellcheck="false"
-          />
+      <!-- ── Toolstrip ─────────────────────────────────────────────── -->
+      <header class="c-strip">
+        <div class="c-brand">
+          <span class="c-brand__mark"></span>
+          <span class="c-brand__name">Notes</span>
+          <span class="c-brand__sub">nucleus</span>
         </div>
 
-        <ul class="note-list" id="note-list">
-          <!-- filled by app.js -->
-        </ul>
+        <span class="c-tsep"></span>
 
-        <footer class="sidebar-footer">
-          <span id="note-count">0 notes</span>
-          <div class="sidebar-actions">
-            <button class="btn-sm" id="save-project" title="Save project">Save</button>
-            <label class="btn-sm" for="project-input" title="Open project">Open</label>
-            <input id="project-input" type="file" accept=".json,application/json" hidden />
+        <div class="c-tgroup">
+          <button class="c-btn" id="new-note" title="New note (Ctrl+N)">＋ New note</button>
+        </div>
+
+        <span class="c-tsep"></span>
+
+        <div class="c-tgroup">
+          <button class="c-btn c-btn--icon" id="undo" title="Undo (Ctrl+Z)" disabled>↶</button>
+          <button class="c-btn c-btn--icon" id="redo" title="Redo (Ctrl+Shift+Z)" disabled>↷</button>
+        </div>
+
+        <span class="c-tsep"></span>
+
+        <div class="c-seg" id="view-seg" title="Editor layout (Ctrl+E)">
+          <button data-mode="write" aria-pressed="true">Write</button>
+          <button data-mode="split" aria-pressed="false">Split</button>
+          <button data-mode="read" aria-pressed="false">Read</button>
+        </div>
+
+        <div class="c-strip__spring"></div>
+
+        <button class="c-btn" id="palette" title="Command palette (Ctrl+K)">⌘K Commands</button>
+        <button class="c-btn c-btn--danger" id="delete-note" title="Delete this note" disabled>Delete</button>
+        <button class="c-btn" id="save-project" title="Download all notes as a project">Save project</button>
+        <label class="c-btn" for="project-input" title="Open a saved project">Open</label>
+        <input id="project-input" type="file" accept=".json,application/json" hidden />
+        <button class="c-btn c-btn--accent" id="export" title="Export all notes as Markdown">Export</button>
+      </header>
+
+      <!-- ── Main: list · editor · inspector ───────────────────────── -->
+      <div class="c-main">
+
+        <aside class="c-rail">
+          <div class="c-panelhead"><span>Notes</span><span class="c-chip" id="note-count">0</span></div>
+          <div class="c-search">
+            <span class="c-search__glyph">⌕</span>
+            <input id="search" type="search" placeholder="Search notes…" autocomplete="off" spellcheck="false" />
           </div>
-        </footer>
-      </aside>
-
-      <!-- ── Editor panel ─────────────────────────────────────── -->
-      <div class="editor-panel">
-
-        <header class="topbar">
-          <input
-            class="title-input"
-            id="title-input"
-            type="text"
-            placeholder="Note title"
-            spellcheck="true"
-          />
-          <div class="topbar-actions">
-            <button class="btn" id="undo" title="Undo (Ctrl+Z)" disabled>↶</button>
-            <button class="btn" id="redo" title="Redo (Ctrl+Shift+Z)" disabled>↷</button>
-            <span class="divider"></span>
-            <button class="btn" id="toggle-preview" title="Toggle preview (Ctrl+P)">Preview</button>
-            <button class="btn accent" id="export" title="Export all notes as Markdown">Export</button>
-            <button class="btn danger" id="delete-note" title="Delete this note" hidden>Delete</button>
+          <div class="c-rail__body">
+            <div id="note-list" role="listbox"></div>
           </div>
-        </header>
+          <div class="c-rail__foot">
+            <button class="c-btn c-btn--icon" id="add-rail" title="New note (Ctrl+N)">＋</button>
+            <span style="font-size:11px;color:var(--c-faint);flex:1">newest first</span>
+          </div>
+        </aside>
 
-        <div class="editor-body">
-          <div class="empty-state" id="empty-state">
+        <main class="c-center" id="editor-panel">
+          <div class="c-empty" id="empty-state" style="padding:40px">
+            <div class="c-empty__kick">01 / notes</div>
             <h1>Your thoughts, written.</h1>
-            <p>Create a note with <kbd>Ctrl+N</kbd> or click <b>+</b> in the sidebar.</p>
-            <p class="hint">Markdown supported · Auto-saves as you type · Stays on your machine.</p>
+            <p>Create a note with <kbd>Ctrl</kbd>+<kbd>N</kbd> — or press <kbd>Ctrl</kbd>+<kbd>K</kbd> and let an agent type for you.</p>
+            <p class="c-empty__hint">Markdown supported · autosaves as you type · stays on your machine.</p>
           </div>
-          <textarea
-            class="editor"
-            id="editor"
-            placeholder="Write in Markdown…"
-            spellcheck="true"
-            hidden
-          ></textarea>
-          <div class="preview" id="preview" hidden></div>
-        </div>
 
-        <footer class="status">
-          <span id="status">Ready</span>
-          <span id="word-count"></span>
-        </footer>
+          <div id="editor-depth" style="display:none; flex:1; min-height:0">
+          <input class="n-title" id="title-input" type="text" placeholder="Note title" spellcheck="true" />
+          <div class="n-mod" id="n-mod">
+            <button data-md="h2" title="Heading">H2</button>
+            <button data-md="bold" title="Bold (Ctrl+B)"><b>B</b></button>
+            <button data-md="italic" title="Italic (Ctrl+I)"><i>I</i></button>
+            <button data-md="code" title="Inline code">‹›</button>
+            <span class="n-mod__sep"></span>
+            <button data-md="ul" title="Bulleted list">• list</button>
+            <button data-md="ol" title="Numbered list">1. list</button>
+            <button data-md="quote" title="Quote">” quote</button>
+            <button data-md="link" title="Link">link</button>
+            <span class="n-mod__sep"></span>
+            <button data-md="snippet" title="Code block">snippet</button>
+          </div>
+          <div class="n-body" id="n-body" data-mode="write">
+            <textarea class="n-editor" id="editor" placeholder="Write in Markdown…" spellcheck="true"></textarea>
+            <div class="n-preview" id="preview"></div>
+          </div>
+          </div>
+        </main>
 
+        <aside class="c-inspector">
+          <div class="c-panelhead"><span>Inspector</span></div>
+          <div class="c-inspector__body" id="inspector"></div>
+          <div class="c-inspector__foot">
+            <button class="c-btn c-btn--icon" id="tape-hint" title="Tape scrubber lives at the bottom — every edit is one step">◷</button>
+            <span style="font-size:11px;color:var(--c-faint);flex:1">history is rewindable</span>
+          </div>
+        </aside>
       </div>
+
+      <!-- ── Status bar ────────────────────────────────────────────── -->
+      <footer class="c-status">
+        <span class="c-dot" id="dot"></span>
+        <span id="status">Ready</span>
+        <span class="c-status__spring"></span>
+        <span id="meta"></span>
+        <span>⌘K commands · Ctrl+E layout</span>
+      </footer>
     </div>
 
     <script type="module" src="/app.js"></script>

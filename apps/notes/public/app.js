@@ -1,33 +1,26 @@
-/**
- * Notes — frontend
- * Vanilla ES-module. Talks to the local server via fetch.
- * Same command-bus pattern as PDF Workbench: every mutation goes through /api/op.
- */
+// Notes — Craft front-end. Vanilla ES-module, zero deps.
+// Every mutation goes through /api/op (bus commands), so the tape, undo and
+// agent proposals see exactly what the human sees.
+//
+// Editor generations (F4): `localRev` bumps on every keystroke, `sentRev`
+// tracks the last generation successfully saved. They only differ while a
+// save is in flight — exactly when the server must not clobber the textarea.
 
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 
-let state = {
-  notes: [],
-  docVersion: 0,
-  canUndo: false,
-  canRedo: false,
-};
+let state = { notes: [], docVersion: 0, canUndo: false, canRedo: false };
 
-  /** The note id currently open in the editor. */
-  let activeId = null;
+/** The note id currently open in the editor. */
+let activeId = null;
 
-  /**
-   * Edit generations (F4). `localRev` bumps on every keystroke; `sentRev` tracks
-   * the last generation successfully saved. They only differ while a save is in
-   * flight, which is exactly when we must not overwrite the textarea.
-   */
-  let localRev = 0;
-  let sentRev = 0;
+/** F4 edit generations (see header). */
+let localRev = 0;
+let sentRev = 0;
 
-/** Whether we're showing the markdown preview. */
-let previewMode = false;
+/** Editor layout: write | split | read (Ctrl+E cycles). */
+let viewMode = "write";
 
 /** Pending auto-save timer. */
 let saveTimer = null;
@@ -36,28 +29,30 @@ let saveTimer = null;
 // DOM refs
 // ---------------------------------------------------------------------------
 
-const $ = id => document.getElementById(id);
+const $ = (sel) => document.querySelector(sel);
 
-const noteList      = $("note-list");
-const searchInput   = $("search");
-const newNoteBtn    = $("new-note");
-const titleInput    = $("title-input");
-const editor        = $("editor");
-const preview       = $("preview");
-const emptyState    = $("empty-state");
-const undoBtn       = $("undo");
-const redoBtn       = $("redo");
-const toggleBtn     = $("toggle-preview");
-const exportBtn     = $("export");
-const deleteBtn     = $("delete-note");
-const saveProjectBtn = $("save-project");
-const projectInput  = $("project-input");
-const statusEl      = $("status");
-const wordCountEl   = $("word-count");
-const noteCountEl   = $("note-count");
+const noteList = $("#note-list");
+const searchInput = $("#search");
+const titleInput = $("#title-input");
+const editor = $("#editor");
+const editorBody = $("#n-body");
+const preview = $("#preview");
+const emptyState = $("#empty-state");
+const editorDepth = $("#editor-depth");
+const undoBtn = $("#undo");
+const redoBtn = $("#redo");
+const deleteBtn = $("#delete-note");
+const exportBtn = $("#export");
+const saveProjectBtn = $("#save-project");
+const projectInput = $("#project-input");
+const statusEl = $("#status");
+const dotEl = $("#dot");
+const metaEl = $("#meta");
+const noteCountEl = $("#note-count");
+const inspectorEl = $("#inspector");
 
 // ---------------------------------------------------------------------------
-// API helpers — same shape as pdf-workbench
+// API helpers
 // ---------------------------------------------------------------------------
 
 async function apiFetch(path, options = {}) {
@@ -65,17 +60,16 @@ async function apiFetch(path, options = {}) {
   return res.json();
 }
 
-async function op(name, params = {}) {
+async function op(name, params = {}, label) {
   return apiFetch("/api/op", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name, params }),
+    body: JSON.stringify({ name, params, label }),
   });
 }
 
 // ---------------------------------------------------------------------------
-// Lightweight Markdown renderer
-// No external deps — handles the most common Markdown constructs.
+// Lightweight Markdown renderer (kept from v1 — hardened, no external deps)
 // ---------------------------------------------------------------------------
 
 function renderMarkdown(src) {
@@ -224,6 +218,10 @@ function relativeDate(iso) {
   return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+function currentNote() {
+  return state.notes.find(n => n.id === activeId) ?? null;
+}
+
 function renderNoteList() {
   const query = searchInput.value.trim().toLowerCase();
   const filtered = query
@@ -233,44 +231,69 @@ function renderNoteList() {
       )
     : state.notes;
 
+  noteCountEl.textContent = String(filtered.length);
+
   if (filtered.length === 0) {
-    noteList.innerHTML = `<li class="note-list-empty">${
-      query ? "No notes match your search." : "No notes yet."
-    }</li>`;
+    noteList.innerHTML = `<div class="c-help" style="padding:10px 12px;color:var(--c-faint);font-size:11.5px">${
+      query ? "No notes match your search." : "No notes yet — Ctrl+N."
+    }</div>`;
     return;
   }
 
-  noteList.innerHTML = filtered.map(n => `
-    <li class="note-item${n.id === activeId ? " active" : ""}" data-id="${n.id}">
-      <div class="note-item-title">${escHtml(n.title || "Untitled")}</div>
-      <div class="note-item-snippet">${escHtml(n.snippet || "No content")}</div>
-      <div class="note-item-date">${relativeDate(n.updatedAt)}</div>
-    </li>
-  `).join("");
+  const frag = document.createDocumentFragment();
+  for (const note of filtered) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "c-row";
+    row.dataset.id = note.id;
+    if (note.id === activeId) row.setAttribute("aria-selected", "true");
+    row.innerHTML =
+      `<span class="c-row__title">${esc(note.title || "Untitled")}</span>` +
+      `<span class="c-row__meta">` +
+      `<span class="c-row__snippet">${esc(note.snippet || "No content")}</span>` +
+      `<span class="c-row__time">${relativeDate(note.updatedAt)}</span>` +
+      `</span>`;
+    row.addEventListener("click", () => void openNote(note.id));
+    frag.appendChild(row);
+  }
+  noteList.replaceChildren(frag);
+}
 
-  noteList.querySelectorAll(".note-item").forEach(el => {
-    el.addEventListener("click", () => openNote(el.dataset.id));
-  });
+function renderViewMode() {
+  editorBody.dataset.mode = viewMode;
+  for (const button of document.querySelectorAll("#view-seg button")) {
+    button.setAttribute("aria-pressed", String(button.dataset.mode === viewMode));
+  }
+  if (viewMode !== "write" && activeId) renderPreview();
+}
+
+function renderPreview() {
+  // Preview shows the live textarea content, not the last saved copy.
+  preview.innerHTML = renderMarkdown(editor.value);
 }
 
 function renderEditor(opts = {}) {
-  const note = state.notes.find(n => n.id === activeId);
+  const note = currentNote();
 
   if (!note) {
-    titleInput.value = "";
-    editor.value = "";
-    emptyState.hidden = false;
-    editor.hidden = true;
-    preview.hidden = true;
+    emptyState.style.display = "";
+    editorDepth.style.display = "none";
     titleInput.disabled = true;
-    deleteBtn.hidden = true;
-    wordCountEl.textContent = "";
+    deleteBtn.disabled = true;
+    activeId = null;
+    inspectorEl.innerHTML =
+      '<div class="c-section">Document</div>' +
+      propRow("Notes", String(state.notes.length)) +
+      propRow("Can undo", state.canUndo ? "yes" : "no") +
+      '<div class="c-section">Shortcuts</div>' +
+      helpBlock();
     return;
   }
 
+  emptyState.style.display = "none";
+  editorDepth.style.display = "";
   titleInput.disabled = false;
-  deleteBtn.hidden = false;
-  emptyState.hidden = true;
+  deleteBtn.disabled = false;
 
   // Never clobber unsent typing: only take server text when every local edit
   // has been saved (F4). Otherwise a save round-trip can drop keystrokes.
@@ -278,39 +301,73 @@ function renderEditor(opts = {}) {
   if (clean && titleInput.value !== note.title) titleInput.value = note.title;
   if (clean && editor.value !== note.content) editor.value = note.content;
 
-  if (previewMode) {
-    editor.hidden = true;
-    preview.hidden = false;
-    preview.innerHTML = renderMarkdown(note.content);
-  } else {
-    editor.hidden = false;
-    preview.hidden = true;
-    // Focus only when the user switched notes, not on every render.
-    if (opts.switched) editor.focus();
-  }
+  renderViewMode();
+  if (viewMode !== "write" && opts.switched) renderPreview();
+  renderInspector(note);
+}
 
-  const words = (note.content ?? "").trim().split(/\s+/).filter(Boolean).length;
-  wordCountEl.textContent = `${words} word${words !== 1 ? "s" : ""}`;
+function propRow(label, value) {
+  return (
+    `<div class="c-prop"><span class="c-prop__label">${esc(label)}</span>` +
+    `<span class="c-prop__value">${value}</span></div>`
+  );
+}
+
+function helpBlock() {
+  return (
+    '<div class="c-help">' +
+    "<p><kbd>Ctrl</kbd>+<kbd>N</kbd> new · <kbd>Ctrl</kbd>+<kbd>E</kbd> layout</p>" +
+    "<p><kbd>Ctrl</kbd>+<kbd>B</kbd> bold · <kbd>Ctrl</kbd>+<kbd>I</kbd> italic</p>" +
+    "<p><kbd>Ctrl</kbd>+<kbd>K</kbd> commands · <kbd>Ctrl</kbd>+<kbd>S</kbd> save now</p>" +
+    "</div>"
+  );
+}
+
+function renderInspector(note) {
+  const words = countWords(note.content);
+  const chars = note.content.length;
+  const position = state.notes.findIndex(n => n.id === note.id) + 1;
+  inspectorEl.innerHTML =
+    '<div class="c-section">Note</div>' +
+    propRow("Position", `#${position}`) +
+    propRow("Created", esc(shortDate(note.createdAt))) +
+    propRow("Updated", esc(shortDate(note.updatedAt))) +
+    propRow("Node", `<code>${esc(note.id)}</code>`) +
+    '<div class="c-section">Metrics</div>' +
+    propRow("Words", String(words)) +
+    propRow("Characters", String(chars)) +
+    propRow("Lines", String(note.content.split("\n").length)) +
+    '<div class="c-section">Shortcuts</div>' +
+    helpBlock();
+}
+
+function shortDate(iso) {
+  if (!iso) return "—";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function countWords(text) {
+  return (text ?? "").trim().split(/\s+/).filter(Boolean).length;
 }
 
 function renderToolbar() {
   undoBtn.disabled = !state.canUndo;
   redoBtn.disabled = !state.canRedo;
-  noteCountEl.textContent = `${state.notes.length} note${state.notes.length !== 1 ? "s" : ""}`;
+  renderMeta();
+}
+
+function renderMeta() {
+  const note = currentNote();
+  const words = note ? countWords(editor.value) : 0;
+  metaEl.textContent = `${words} words · ${state.notes.length} note${state.notes.length !== 1 ? "s" : ""}`;
 }
 
 function render(opts = {}) {
   renderNoteList();
   renderEditor(opts);
   renderToolbar();
-}
-
-function escHtml(s) {
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
 
 // ---------------------------------------------------------------------------
@@ -324,11 +381,19 @@ function setStatus(msg, duration = 2000) {
 
 function applyState(data) {
   if (!data.ok) {
+    dotEl.classList.add("c-dot--err");
     setStatus(`Error: ${data.error?.message ?? "unknown"}`);
     return;
   }
+  dotEl.classList.remove("c-dot--err");
   state = { notes: data.notes, docVersion: data.docVersion, canUndo: data.canUndo, canRedo: data.canRedo };
+  // The active note may have vanished (undo of its creation, delete).
+  if (activeId && !state.notes.find(n => n.id === activeId)) activeId = null;
   render();
+}
+
+async function refresh() {
+  applyState(await apiFetch("/api/state"));
 }
 
 async function openNote(id) {
@@ -337,19 +402,16 @@ async function openNote(id) {
   clearTimeout(saveTimer);
   if (activeId && activeId !== id) await flushSave().catch(() => {});
   activeId = id;
-  previewMode = false;
-  toggleBtn.textContent = "Preview";
   localRev = 0;
   sentRev = 0;
   render({ switched: true });
+  editor.focus();
 }
 
 async function createNote() {
-  const data = await op("note.create", { title: "Untitled", content: "" });
+  const data = await op("note.create", { title: "Untitled", content: "" }, "New note");
   applyState(data);
-  if (data.ok && data.result?.id) {
-    await openNote(data.result.id);
-  }
+  if (data.ok && data.result?.id) await openNote(data.result.id);
   setStatus("Note created");
 }
 
@@ -363,13 +425,13 @@ async function flushSave() {
   if (!activeId) return;
   clearTimeout(saveTimer);
   const rev = localRev;
-  // The note.update command coalesces a burst into one undo step server-side
-  // (F2), so no client-side key is needed.
+  // The note.update command coalesces a burst into one undo step server-side,
+  // so no client-side key is needed.
   const data = await op("note.update", {
     id: activeId,
     title: titleInput.value,
     content: editor.value,
-  });
+  }, "Edit note");
   applyState(data);
   // Only claim these edits are saved if no keystroke landed mid-flight.
   sentRev = Math.max(sentRev, rev);
@@ -378,56 +440,98 @@ async function flushSave() {
 
 async function deleteNote() {
   if (!activeId) return;
-  const note = state.notes.find(n => n.id === activeId);
+  const note = currentNote();
   if (!confirm(`Delete "${note?.title || "this note"}"? This can be undone.`)) return;
-  const data = await op("note.delete", { id: activeId });
+  const data = await op("note.delete", { id: activeId }, "Delete note");
   activeId = null;
   applyState(data);
   setStatus("Note deleted");
+}
+
+// --- editor niceties ---------------------------------------------------------
+
+function insertMarkdown(kind) {
+  const target = editor;
+  const start = target.selectionStart ?? 0;
+  const end = target.selectionEnd ?? 0;
+  const selected = target.value.slice(start, end);
+  let prefix = "";
+  let inner = selected;
+  let suffix = "";
+
+  switch (kind) {
+    case "h2": prefix = "## "; break;
+    case "bold": suffix = "**"; inner = inner || "bold"; break;
+    case "italic": suffix = "*"; inner = inner || "italic"; break;
+    case "code": suffix = "`"; inner = inner || "code"; break;
+    case "ul": prefix = "- "; break;
+    case "ol": prefix = "1. "; break;
+    case "quote": prefix = "> "; break;
+    case "snippet": prefix = "```\n"; suffix = "\n```"; break;
+    case "link": {
+      const link = inner || "https://";
+      inner = `[${inner || "label"}](${link})`;
+      break;
+    }
+    default: break;
+  }
+
+  target.setRangeText(prefix + inner + suffix, start, end, "end");
+  target.focus();
+  editor.dispatchEvent(new Event("input", { bubbles: false }));
 }
 
 // ---------------------------------------------------------------------------
 // Event listeners
 // ---------------------------------------------------------------------------
 
-newNoteBtn.addEventListener("click", createNote);
+$("#new-note").addEventListener("click", createNote);
+$("#add-rail").addEventListener("click", createNote);
 
 searchInput.addEventListener("input", renderNoteList);
 
 titleInput.addEventListener("input", scheduleSave);
+
 editor.addEventListener("input", () => {
-  // Update word count immediately
-  const words = editor.value.trim().split(/\s+/).filter(Boolean).length;
-  wordCountEl.textContent = `${words} word${words !== 1 ? "s" : ""}`;
   scheduleSave();
+  if (viewMode === "split") renderPreview();
+  renderMeta();
 });
 
-undoBtn.addEventListener("click", async () => {
-  const data = await apiFetch("/api/undo", { method: "POST" });
-  // After undo, re-sync editor with server state
-  applyState(data);
-  // If the active note was deleted by undo, pick next
-  if (activeId && !state.notes.find(n => n.id === activeId)) {
-    activeId = state.notes[0]?.id ?? null;
+for (const button of document.querySelectorAll("#view-seg button")) {
+  button.addEventListener("click", () => setViewMode(button.dataset.mode));
+}
+
+function setViewMode(mode) {
+  if (!["write", "split", "read"].includes(mode)) return;
+  if (mode !== "write") {
+    clearTimeout(saveTimer);
+    void flushSave().catch(() => {});
   }
-  render();
-});
+  viewMode = mode;
+  renderViewMode();
+}
 
-redoBtn.addEventListener("click", async () => {
-  const data = await apiFetch("/api/redo", { method: "POST" });
-  applyState(data);
-  render();
-});
+for (const button of document.querySelectorAll("#n-mod button")) {
+  button.addEventListener("click", () => insertMarkdown(button.dataset.md));
+}
 
-toggleBtn.addEventListener("click", () => {
-  if (!activeId) return;
-  // Flush any pending save before switching to preview
+async function undo() {
   clearTimeout(saveTimer);
-  if (!previewMode) flushSave();
-  previewMode = !previewMode;
-  toggleBtn.textContent = previewMode ? "Edit" : "Preview";
-  renderEditor();
-});
+  applyState(await apiFetch("/api/undo", { method: "POST" }));
+  setStatus("Undone");
+}
+
+async function redo() {
+  applyState(await apiFetch("/api/redo", { method: "POST" }));
+  setStatus("Redone");
+}
+
+undoBtn.addEventListener("click", undo);
+redoBtn.addEventListener("click", redo);
+
+$("#palette").addEventListener("click", () => window.NucleusKit?.openPalette());
+$("#tape-hint").addEventListener("click", () => setStatus("The tape scrubber sits at the bottom — every edit is one rewindable step."));
 
 exportBtn.addEventListener("click", () => {
   window.location.href = "/api/export";
@@ -451,30 +555,41 @@ projectInput.addEventListener("change", async () => {
     body: text,
   });
   activeId = null;
+  titleInput.value = "";
+  editor.value = "";
   applyState(data);
   setStatus("Project loaded");
   projectInput.value = "";
 });
 
 // Keyboard shortcuts
-document.addEventListener("keydown", e => {
-  const ctrl = e.ctrlKey || e.metaKey;
-  if (ctrl && e.key === "n") { e.preventDefault(); createNote(); }
-  if (ctrl && e.key === "z" && !e.shiftKey) { e.preventDefault(); undoBtn.click(); }
-  if (ctrl && (e.key === "Z" || (e.key === "z" && e.shiftKey))) { e.preventDefault(); redoBtn.click(); }
-  if (ctrl && e.key === "p") { e.preventDefault(); toggleBtn.click(); }
-  if (ctrl && e.key === "s") { e.preventDefault(); clearTimeout(saveTimer); flushSave(); }
+document.addEventListener("keydown", (event) => {
+  const mod = event.ctrlKey || event.metaKey;
+  const key = event.key.toLowerCase();
+  const typing = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement;
+  if (mod && key === "n") { event.preventDefault(); void createNote(); }
+  else if (mod && key === "z" && !event.shiftKey) { event.preventDefault(); void undo(); }
+  else if (mod && ((key === "z" && event.shiftKey) || key === "y")) { event.preventDefault(); void redo(); }
+  else if (mod && key === "e") { event.preventDefault(); cycleViewMode(); }
+  else if (mod && key === "s") { event.preventDefault(); setStatus("Saving…", 0); void flushSave(); }
+  else if (mod && key === "b" && event.target === editor) { event.preventDefault(); insertMarkdown("bold"); }
+  else if (mod && key === "i" && event.target === editor) { event.preventDefault(); insertMarkdown("italic"); }
+  else if (event.key === "Escape" && !typing) {
+    searchInput.focus();
+  }
 });
+
+function cycleViewMode() {
+  const order = ["write", "split", "read"];
+  setViewMode(order[(order.indexOf(viewMode) + 1) % order.length]);
+}
 
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
 
-(async () => {
-  const data = await apiFetch("/api/state");
-  applyState(data);
-  // Open first note if any exist
-  if (state.notes.length > 0) {
-    await openNote(state.notes[0].id);
-  }
+void (async () => {
+  viewMode = state.notes.length ? viewMode : "write";
+  await refresh();
+  if (state.notes.length > 0) await openNote(state.notes[0].id);
 })();
