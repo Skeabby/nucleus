@@ -26,6 +26,7 @@ import {
 } from "@nucleus/core";
 import type { ControlServer } from "@nucleus/control";
 import { guard, tokenCookie, type GuardOptions } from "./guard.js";
+import { acquireInstanceLock, type InstanceLock } from "./lock.js";
 import { MIME, readJson, sendJson, serveStatic } from "./http.js";
 import { SseHub } from "./sse.js";
 import {
@@ -94,6 +95,11 @@ export async function createAppServer(options: CreateAppServerOptions): Promise<
   const port = options.port ?? Number(process.env.PORT ?? 5173);
   const guardOptions: GuardOptions = { port, token };
   const persist = options.persist ?? true;
+  // Single-instance: two processes writing the same persisted document is the
+  // one way M2's document persistence can degrade silently.
+  const lock = persist
+    ? await acquireInstanceLock(options.dataDir ?? defaultDataDir(), options.id)
+    : null;
   const session0 = options.createSession();
   let session: AppKitSession = session0;
 
@@ -473,6 +479,7 @@ export async function createAppServer(options: CreateAppServerOptions): Promise<
       if (saveTimer) clearTimeout(saveTimer);
       await tapeWrite; // the append chain may still hold the last record
       await new Promise<void>((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())));
+      await lock?.release();
     },
   };
 }

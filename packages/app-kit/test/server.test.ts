@@ -364,4 +364,19 @@ describe("@nucleus/app-kit — custom routes and session swap", () => {
     const doc: DocumentState = createDocument("kit.test");
     expect(doc.docVersion).toBe(0);
   });
+
+  it("double instance on the same dataDir is refused (single-instance)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "nucleus-kit-lock-"));
+    const one = await createAppServer(kitOptions({ dataDir: dir, persist: true }));
+    await expect(
+      createAppServer(kitOptions({ dataDir: dir, persist: true })),
+    ).rejects.toMatchObject({
+      name: "InstanceAlreadyRunningError",
+      appId: "nucleus.kit-test",
+      ownerPid: process.pid,
+    });
+    await one.close();
+    const two = await createAppServer(kitOptions({ dataDir: dir, persist: true }));
+    await two.close();
+  });
 });

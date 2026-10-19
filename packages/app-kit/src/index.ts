@@ -1,4 +1,9 @@
 export { checkRequest, guard, tokenCookie, type GuardOptions, type GuardRejection } from "./guard.js";
+export {
+  acquireInstanceLock,
+  InstanceAlreadyRunningError,
+  type InstanceLock,
+} from "./lock.js";
 export { MIME, sendJson, readJson, readBody, serveStatic } from "./http.js";
 export { SseHub, SSE_HEARTBEAT_MS } from "./sse.js";
 export {
