@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
@@ -19,6 +20,10 @@ use crate::ui::theme::{FOOTER_H, HEADER_H, fonts};
 use crate::ui::{
     Action, BusLine, Counts, Facts, Filter, SortKey, Tokens, View, ViewState, configure_theme,
 };
+
+/// Rolling-latest survey module (§4.5). Declared here rather than in main.rs
+/// so the module wiring stays inside this file.
+mod updater;
 
 /// Live state of the running background job, for the footer.
 struct JobStatus {
@@ -51,10 +56,21 @@ pub struct LauncherApp {
     bus: VecDeque<BusLine>,
     /// Open review requests per app id, from proposal events.
     pending: BTreeMap<String, i64>,
+    /// Rolling-latest survey (one result per launch, fetched in background).
+    survey: Receiver<Result<updater::Survey, String>>,
+    /// Remote `suiteVersion` newer than this build, for the header banner.
+    launcher_update: Option<String>,
+    /// Apps queued for silent auto-install after the survey.
+    auto_queue: VecDeque<String>,
+    /// Where the self-update installer is staged until it is run.
+    pending_setup: Option<PathBuf>,
 }
 
 const LOG_CAP: usize = 40;
 const BUS_CAP: usize = 200;
+
+/// Pseudo-id of the launcher self-update download job.
+const SELF_JOB: &str = "nucleus-launcher-self";
 
 impl LauncherApp {
     #[allow(clippy::too_many_arguments)]
@@ -70,6 +86,10 @@ impl LauncherApp {
         crate::ui::install_fonts(&cc.egui_ctx);
         configure_theme(&cc.egui_ctx, &Tokens::dark());
         let (jobs, job_events) = Jobs::new();
+        let (survey_tx, survey) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = survey_tx.send(updater::survey(updater::DEFAULT_BASE));
+        });
         Self {
             discovery,
             runtime,
@@ -89,6 +109,10 @@ impl LauncherApp {
             facts,
             bus: VecDeque::new(),
             pending: BTreeMap::new(),
+            survey,
+            launcher_update: None,
+            auto_queue: VecDeque::new(),
+            pending_setup: None,
         }
     }
 
@@ -118,6 +142,53 @@ impl LauncherApp {
         }
         counts.running = self.runtime.running_count();
         counts
+    }
+
+    /// Drain the (single) startup survey result: store the remote catalogue
+    /// as the local override, reload app statuses, queue silent updates and
+    /// flag a launcher self-update when the remote suite is newer.
+    fn step_survey(&mut self) {
+        let outcome = match self.survey.try_recv() {
+            Ok(Ok(result)) => result,
+            Ok(Err(message)) => {
+                self.log_line(format!("update check skipped: {message}"));
+                return;
+            }
+            Err(_) => return, // still running in the background
+        };
+        let data_dir = crate::paths::nucleus_data_dir();
+        if let Err(message) = updater::store_override(&outcome.catalog_json, &data_dir) {
+            self.log_line(format!("catalogue update not stored: {message}"));
+            return;
+        }
+        self.launcher_update = outcome.launcher_update.clone();
+        if let Some(remote) = &outcome.launcher_update {
+            self.log_line(format!(
+                "launcher {remote} available — restart to pick it up"
+            ));
+        }
+        self.catalog = crate::catalogue::load(&data_dir).0;
+        self.discovery = crate::discovery::discover(&self.paths, &self.catalog);
+
+        // Queue every installed app whose catalogue version is newer; jobs
+        // run one at a time, so the queue drains as each job finishes.
+        let mut refreshes = Vec::new();
+        for card in &self.discovery.cards {
+            if let Card::App(app) = card {
+                let running = self.runtime.is_running(app.id());
+                let status = derive_status(app.installed.as_ref(), app.catalog.as_ref(), running);
+                if status == AppStatus::UpdateAvailable {
+                    refreshes.push(app.id().to_string());
+                }
+            }
+        }
+        for id in refreshes {
+            self.log_line(format!("{id} update available — installing"));
+            self.auto_queue.push_back(id);
+        }
+        if let Some(next) = self.auto_queue.pop_front() {
+            self.start_install(&next);
+        }
     }
 
     /// Drain runtime events into the log.
@@ -246,10 +317,20 @@ impl LauncherApp {
                         job.total = total;
                     }
                 }
-                JobEvent::Finished { summary, .. } => {
+                JobEvent::Finished { id, summary } => {
                     self.log_line(summary);
                     self.job = None;
-                    rediscover = true;
+                    if id == SELF_JOB {
+                        // The setup is staged: hand over to it and leave the
+                        // stage. Inno replaces the running exe on install.
+                        self.swap_to_setup();
+                    } else {
+                        rediscover = true;
+                        // Silent updates: start the next queued refresh.
+                        if let Some(next) = self.auto_queue.pop_front() {
+                            self.start_install(&next);
+                        }
+                    }
                 }
                 JobEvent::Failed { id, message } => {
                     self.log_line(format!("{id} failed: {message}"));
@@ -360,6 +441,45 @@ impl LauncherApp {
         }
     }
 
+    /// Download the new launcher's installer to `%TEMP%` (rolling `latest`
+    /// release asset, matching the surveyed suite version).
+    fn start_launcher_update(&mut self, new_version: String) {
+        let url = format!(
+            "{}/NucleusSetup-{new_version}-win64.exe",
+            updater::DEFAULT_BASE.trim_end_matches('/')
+        );
+        let dest = std::env::temp_dir().join(format!("NucleusSetup-{new_version}-win64.exe"));
+        self.pending_setup = Some(dest.clone());
+        let label = format!("Launcher update {new_version}");
+        let started = self.jobs.submit(SELF_JOB.to_string(), label, move |ctx| {
+            ctx.stage(Stage::Downloading);
+            let cancel = ctx.cancel_flag();
+            let mut progress = |done: u64, total: Option<u64>| ctx.progress(done, total);
+            crate::net::download_to_file(&url, &dest, &mut progress, &cancel)
+                .map_err(|err| err.to_string())?;
+            Ok("launcher installer staged".into())
+        });
+        if !started {
+            self.log_line("a job is already running");
+        }
+    }
+
+    /// Hand the freshly staged installer over to Windows and exit immediately:
+    /// the launcher stops running, so Inno can replace the exe without a
+    /// file-in-use fight. `--SILENT` keeps the handover unattended.
+    fn swap_to_setup(&mut self) {
+        if let Some(setup) = self.pending_setup.take()
+            && setup.is_file()
+        {
+            let _ = std::process::Command::new(&setup)
+                .arg("/CURRENTUSER")
+                .arg("/SILENT")
+                .arg("/SUPPRESSMSGBOXES")
+                .spawn();
+        }
+        std::process::exit(0);
+    }
+
     /// Apply a queued action after the frame's panels are drawn.
     fn apply_action(&mut self, id: String, action: Action) {
         match action {
@@ -380,12 +500,19 @@ impl LauncherApp {
             }
             Action::Install | Action::Update => self.start_install(&id),
             Action::Uninstall => self.start_uninstall(&id),
+            Action::SelfUpdate => {
+                let Some(remote) = self.launcher_update.clone() else {
+                    return;
+                };
+                self.start_launcher_update(remote);
+            }
         }
     }
 }
 
 impl eframe::App for LauncherApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.step_survey();
         self.step_events();
         self.step_jobs();
         self.runtime.reconcile();
@@ -414,6 +541,7 @@ impl eframe::App for LauncherApp {
         let pending_badge = self.pending_total();
         let bus_snapshot: Vec<BusLine> = self.bus.iter().cloned().collect();
         let pending_list = self.pending_list();
+        let launcher_banner: Option<String> = self.launcher_update.clone();
         let mut actions: Vec<(String, Action)> = Vec::new();
         let border = Stroke::new(1.0_f32, t.line);
 
@@ -472,6 +600,31 @@ impl eframe::App for LauncherApp {
                     crate::ui::views::toolbar(ui, &t, &mut state, counts);
                     ui.add_space(18.0);
 
+                    if let Some(remote) = &launcher_banner {
+                        Frame::NONE
+                            .fill(t.sunken)
+                            .stroke(border)
+                            .inner_margin(Margin::symmetric(14, 10))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "Launcher {remote} is available. Installing \
+                                             downloads the new setup and restarts Nucleus."
+                                        ))
+                                        .font(fonts::body(12.0))
+                                        .color(t.ink),
+                                    );
+                                    let button =
+                                        ui.button(RichText::new("Update launcher").color(t.accent));
+                                    if button.clicked() {
+                                        actions
+                                            .push(("nucleus-launcher".into(), Action::SelfUpdate));
+                                    }
+                                });
+                            });
+                        ui.add_space(14.0);
+                    }
                     if !facts.node_ok() || !facts.errors.is_empty() {
                         Frame::NONE
                             .fill(t.sunken)

@@ -128,6 +128,8 @@ pub enum Action {
     Update,
     /// Remove a catalogue-installed app (M2).
     Uninstall,
+    /// Download the new launcher installer and swap to it (updater).
+    SelfUpdate,
 }
 
 /// Node availability, disclosed honestly.
