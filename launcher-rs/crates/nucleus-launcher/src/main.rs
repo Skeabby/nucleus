@@ -13,6 +13,7 @@ mod catalogue;
 mod discovery;
 mod install;
 mod jobs;
+mod launcher_lock;
 mod net;
 mod pack;
 mod paths;
@@ -20,6 +21,7 @@ mod ports;
 mod probe;
 mod process;
 mod runtime;
+mod sse_events;
 mod ui;
 mod verify;
 mod window;
@@ -332,11 +334,23 @@ fn main() {
     }
 
     // --- Engine + window ----------------------------------------------------
+    // Single-instance (§4.5): a second launcher window must not happen. The
+    // lock is held for as long as main() lives; process death releases it.
+    // CLI helpers (--smoke/--list) above are read-only and stay multi-call.
+    let _lock = match launcher_lock::acquire(&crate::paths::nucleus_data_dir()) {
+        Ok(lock) => lock,
+        Err(message) => {
+            eprintln!("{message}");
+            std::process::exit(0);
+        }
+    };
+
     let (runtime, events) = runtime::Runtime::new(runtime::RuntimeConfig {
         node_path: node.clone(),
         shell_exe: paths.shell_exe.clone(),
         icon_ico: paths.icon_ico.clone(),
         window_profiles_dir: paths.window_profiles_dir.clone(),
+        run_registry_dir: crate::paths::nucleus_data_dir().join("run"),
         window_size: window::APP_WINDOW_SIZE,
     });
     let facts = Facts {

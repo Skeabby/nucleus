@@ -237,6 +237,34 @@
 > **app-kit 33** (guard lifted with its tests, e2e route/SSE/persistence/migration/ZIP suites) — Rust side
 > untouched (110 tests).
 
+> **Update #16 (2026-10-19) — Bus in the launcher, single-instance (M3-lite; satellite dé-scopé).**
+> The §4.4/§4.5 contract lands in three layers. **Pure (core):** a new I/O-free `bus` module in
+> `nucleus-launcher-core` — an incremental **SSE line parser** (event/data/multi-data/comments/CR),
+> frame **classification** (`command` tape records → actor/command/label; `proposal` → status; heartbeats
+> noise), `pending_delta` for the open-review counter, the **run-registry record**
+> `{id, name, port, token, pid, startedAt}` (camelCase wire) with self-healing parse, and a chrono-free
+> RFC 3339 writer (days-from-civil, leap-day tested). **Engine (launcher):** `Running` gains
+> `name/token/startedAt`; every start/stop/exit **rewrites `%APPDATA%\Nucleus\run\apps.json` atomically**
+> (tmp+rename, full replace — corrupt files heal on the next change) per §4.4, which is exactly what
+> the M4 MCP proxy will read; after a server app's readiness probe answers, `Runtime::start_bus`
+> spawns **one subscriber thread per app** (ureq `into_reader()` streaming) that pushes classified
+> frames into the existing `Event` channel as `Event::Command` / `Event::Proposal`. **UI:** a third
+> view, **Bus** (nav link shows the pending-review badge when > 0) — a live feed, newest first, of
+> time · actor badge (`AGENT · user` in accent cyan for `agent`, neutral ink for `human`) ·
+> command+label · app · status pill (`APPLIED` good / `PENDING` warn / accepted info / rejected faint),
+> with a summary strip (running count + per-app pending review). The **living satellite** (§4.5 tile
+> animation) is deliberately **de-scoped from M3-lite** per decision — activity classification stays
+> in the feed. **Single-instance:** app-kit refusal (two processes writing one persisted document is
+> the one silent-corruption path M2 opened): `createAppServer` takes an O_EXCL lock
+> `<dataDir>/locks/<appId>/owner.json` ({pid, startedAt}) — dead-owner takeover via `process.kill(pid, 0)`,
+> corrupt owner = stale, corrupt-but-alive keeps the original file — and the launcher fails fast:
+> second same-app launch **exits 3** (Update #13 pre-ready failure semantics); tests prove cross-process
+> refusal, takeover, per-id keying and the e2e double-instance case. On the launcher side
+> (§4.5 "Single-instance lock"): an advisory lock on `%APPDATA%\Nucleus\launcher.lock`
+> (`std::fs::try_lock`, auto-released on process death, no native mutex dep). **Testing:** core lift 110 → 126 Rust tests (bus 16 + SSE e2e against a local fake app-kit stream + launcher-lock unit);
+> TS 156 → 163 (app-kit 33 → 40: lock suite + double-instance). `apps/launcher` + `packages/launcher` (TS)
+> are now formally legacy surfaces and marked deprecated in their READMEs.
+
 **Codename:** `nucleus` · monorepo root `nucleus` · packages `@nucleus/*`
 
 ---

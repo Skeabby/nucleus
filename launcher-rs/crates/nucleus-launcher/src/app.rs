@@ -1,13 +1,14 @@
 //! The eframe application: owns discovery, the runtime, the event channel and
 //! the three-panel flat layout (header / central / footer).
 
+use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
 use egui::{CentralPanel, Frame, Margin, RichText, Stroke, TopBottomPanel};
 
-use nucleus_launcher_core::{AppStatus, Card, Catalog, derive_status};
+use nucleus_launcher_core::{AppStatus, Card, Catalog, derive_status, iso8601, pending_delta};
 
 use crate::discovery::Discovery;
 use crate::jobs::{JobEvent, Jobs, Stage};
@@ -15,7 +16,9 @@ use crate::paths::Paths;
 use crate::runtime::{Event, Runtime};
 use crate::ui::icons::IconStore;
 use crate::ui::theme::{FOOTER_H, HEADER_H, fonts};
-use crate::ui::{Action, Counts, Facts, Filter, SortKey, Tokens, View, ViewState, configure_theme};
+use crate::ui::{
+    Action, BusLine, Counts, Facts, Filter, SortKey, Tokens, View, ViewState, configure_theme,
+};
 
 /// Live state of the running background job, for the footer.
 struct JobStatus {
@@ -44,9 +47,14 @@ pub struct LauncherApp {
     dark: bool,
     icons: IconStore,
     facts: Facts,
+    /// Bus feed (M3-lite): oldest → newest, capped.
+    bus: VecDeque<BusLine>,
+    /// Open review requests per app id, from proposal events.
+    pending: BTreeMap<String, i64>,
 }
 
 const LOG_CAP: usize = 40;
+const BUS_CAP: usize = 200;
 
 impl LauncherApp {
     #[allow(clippy::too_many_arguments)]
@@ -79,6 +87,8 @@ impl LauncherApp {
             dark: true,
             icons: IconStore::new(),
             facts,
+            bus: VecDeque::new(),
+            pending: BTreeMap::new(),
         }
     }
 
@@ -123,7 +133,55 @@ impl LauncherApp {
                     }
                 }
                 Event::Failed(id, message) => self.log_line(format!("{id} failed: {message}")),
-                Event::Stopped(id) => self.log_line(format!("{id} stopped")),
+                Event::Stopped(id) => {
+                    self.pending.remove(&id);
+                    self.log_line(format!("{id} stopped"));
+                }
+                Event::Command {
+                    app,
+                    ts,
+                    actor_kind,
+                    actor_id,
+                    command,
+                    label,
+                    ..
+                } => {
+                    self.log_line(format!("{actor_kind} · {app} · {command}"));
+                    self.bus_line(BusLine {
+                        time: short_time(&ts),
+                        app,
+                        actor_kind,
+                        actor_id,
+                        command,
+                        label,
+                        status: "applied".to_string(),
+                    });
+                }
+                Event::Proposal {
+                    app,
+                    actor_kind,
+                    actor_id,
+                    command,
+                    status,
+                } => {
+                    let delta = i64::from(pending_delta(&status));
+                    if delta != 0 {
+                        let counter = self.pending.entry(app.clone()).or_insert(0);
+                        *counter = (*counter + delta).max(0);
+                    }
+                    self.log_line(format!(
+                        "{actor_kind} · {app} · {command} proposal {status}"
+                    ));
+                    self.bus_line(BusLine {
+                        time: clock_now(),
+                        app,
+                        actor_kind,
+                        actor_id,
+                        command,
+                        label: String::new(),
+                        status,
+                    });
+                }
             }
         }
     }
@@ -133,6 +191,28 @@ impl LauncherApp {
         while self.log.len() > LOG_CAP {
             self.log.pop_front();
         }
+    }
+
+    /// One landed Bus event → feed (newest last internally, displayed newest
+    /// first) with a cap.
+    fn bus_line(&mut self, line: BusLine) {
+        self.bus.push_back(line);
+        while self.bus.len() > BUS_CAP {
+            self.bus.pop_front();
+        }
+    }
+
+    /// `(app id, count)` pairs with an open review request, for the UI.
+    fn pending_list(&self) -> Vec<(String, usize)> {
+        self.pending
+            .iter()
+            .filter_map(|(app, count)| (*count > 0).then_some((app.clone(), *count as usize)))
+            .collect()
+    }
+
+    /// Total open review requests — the header badge.
+    fn pending_total(&self) -> usize {
+        self.pending_list().iter().map(|(_, count)| count).sum()
     }
 
     /// Drain background job events into the log + [`JobStatus`], and re-run
@@ -329,6 +409,11 @@ impl eframe::App for LauncherApp {
         let counts = self.counts();
         let job_line = self.job_line();
         let busy = self.jobs.is_busy();
+        // Bus data precomputed once (owned snapshots): the panel closures
+        // below hold &mut field borrows and must not re-borrow self.
+        let pending_badge = self.pending_total();
+        let bus_snapshot: Vec<BusLine> = self.bus.iter().cloned().collect();
+        let pending_list = self.pending_list();
         let mut actions: Vec<(String, Action)> = Vec::new();
         let border = Stroke::new(1.0_f32, t.line);
 
@@ -351,7 +436,7 @@ impl eframe::App for LauncherApp {
                         .stroke(border),
                 )
                 .show(ctx, |ui| {
-                    crate::ui::views::header(ui, &t, &mut state, &mut self.icons);
+                    crate::ui::views::header(ui, &t, &mut state, pending_badge, &mut self.icons);
                 });
 
             // --- footer, the status bar -------------------------------------
@@ -422,6 +507,8 @@ impl eframe::App for LauncherApp {
                         &mut actions,
                         icons,
                         busy,
+                        &bus_snapshot,
+                        &pending_list,
                     );
                 });
         }
@@ -445,4 +532,19 @@ impl eframe::App for LauncherApp {
         self.jobs.cancel();
         self.runtime.stop_all();
     }
+}
+
+/// `HH:MM:SS` right now — proposal rows carry no timestamp of their own, so
+/// the launcher stamps them on arrival.
+fn clock_now() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_secs())
+        .unwrap_or(0);
+    short_time(&iso8601(secs))
+}
+
+/// Strip an RFC 3339 stamp down to its clock part.
+fn short_time(ts: &str) -> String {
+    ts.get(11..19).unwrap_or(ts).to_string()
 }

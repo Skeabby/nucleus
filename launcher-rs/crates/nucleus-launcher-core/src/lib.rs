@@ -11,6 +11,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod bus;
 pub mod catalog;
 pub mod error;
 pub mod installed;
@@ -21,6 +22,10 @@ pub mod status;
 pub mod verify;
 pub mod version;
 
+pub use bus::{
+    BusFrame, CommandFrame, ProposalFrame, RunningAppRecord, SseFrame, SseParser, classify_frame,
+    iso8601, parse_registry, pending_delta, serialize_registry,
+};
 pub use catalog::{Catalog, CatalogEntry, parse_catalog};
 pub use error::ManifestError;
 pub use installed::{InstalledIndex, InstalledRecord};

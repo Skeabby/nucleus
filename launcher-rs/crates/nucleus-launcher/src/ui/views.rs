@@ -13,7 +13,7 @@ use egui::{
 use nucleus_launcher_core::{AppStatus, Card, derive_status};
 
 use super::icons::IconStore;
-use super::theme::{CONTROL_H, HUD_SIZE, Tokens, fonts};
+use super::theme::{CONTROL_H, HUD_SIZE, Tokens, Tone, fonts};
 use super::widgets::{self, ButtonKind, Cell};
 use crate::runtime::Runtime;
 
@@ -42,6 +42,8 @@ const COL_ACTIONS: f32 = 180.0;
 pub enum View {
     Grid,
     Table,
+    /// The live command feed of every running app (M3-lite).
+    Bus,
 }
 
 impl View {
@@ -49,8 +51,28 @@ impl View {
         match self {
             View::Grid => "Grid",
             View::Table => "Table",
+            View::Bus => "Bus",
         }
     }
+}
+
+/// One line of the Bus feed: a command or a proposal status change that
+/// happened in a running app, as seen through its SSE stream.
+#[derive(Debug, Clone)]
+pub struct BusLine {
+    /// Short clock stamp, e.g. `14:32:07`.
+    pub time: String,
+    /// App id, e.g. `nucleus.pdf`.
+    pub app: String,
+    /// `human` | `agent` | raw unknown actor kind.
+    pub actor_kind: String,
+    pub actor_id: String,
+    /// Command name, e.g. `pdf.removeMany`.
+    pub command: String,
+    /// Optional human label from the record.
+    pub label: String,
+    /// `applied` | proposal status (`pending`, `accepted`, `rejected`).
+    pub status: String,
 }
 
 /// A sortable table column.
@@ -179,7 +201,13 @@ fn status_of(card: &Card) -> AppStatus {
 // ---------------------------------------------------------------------------
 
 /// The 48 px top bar: wordmark on the left, view switch and theme on the right.
-pub fn header(ui: &mut Ui, t: &Tokens, state: &mut ViewState<'_>, icons: &mut IconStore) {
+pub fn header(
+    ui: &mut Ui,
+    t: &Tokens,
+    state: &mut ViewState<'_>,
+    pending: usize,
+    icons: &mut IconStore,
+) {
     let mut view = *state.view;
     let mut dark = *state.dark;
 
@@ -216,6 +244,16 @@ pub fn header(ui: &mut Ui, t: &Tokens, state: &mut ViewState<'_>, icons: &mut Ic
                 if widgets::nav_link(ui, t, View::Grid.label(), view == View::Grid).clicked() {
                     view = View::Grid;
                 }
+                // The Bus shows pending activity with a badge count.
+                let bus_label = if pending > 0 {
+                    format!("Bus · {}", pending)
+                } else {
+                    "Bus".to_string()
+                };
+                if widgets::nav_link(ui, t, bus_label.as_str(), view == View::Bus).clicked() {
+                    view = View::Bus;
+                }
+                widgets::header_rule(ui, t);
             },
         );
     });
@@ -365,6 +403,8 @@ pub fn main_area(
     actions: &mut Vec<(String, Action)>,
     icons: &mut IconStore,
     busy: bool,
+    feed: &[BusLine],
+    pending: &[(String, usize)],
 ) {
     let filter = *state.filter;
     let search: String = state.search.clone();
@@ -405,6 +445,16 @@ pub fn main_area(
         sort_cards(&mut list, sort);
     }
 
+    // The Bus ignores the app filter/search — it is a live feed over running
+    // apps, not a discovery surface.
+    if *state.view == View::Bus {
+        egui::ScrollArea::vertical()
+            .id_salt("nucleus-bus")
+            .auto_shrink([false, false])
+            .show(ui, |ui| bus_feed(ui, t, feed, pending, runtime));
+        return;
+    }
+
     if list.is_empty() {
         ui.add_space(40.0);
         ui.vertical_centered(|ui| {
@@ -414,6 +464,7 @@ pub fn main_area(
     }
 
     match *state.view {
+        View::Bus => {} // handled above (returned before the list build)
         View::Grid => {
             egui::ScrollArea::vertical()
                 .id_salt("nucleus-grid")
@@ -462,6 +513,133 @@ fn status_rank(status: &AppStatus) -> u8 {
         AppStatus::UpdateAvailable => 2,
         AppStatus::NotInstalled => 3,
         AppStatus::Unavailable => 4,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bus feed (M3-lite)
+// ---------------------------------------------------------------------------
+
+/// The live command/proposal feed across every running app: summary strip,
+/// then newest-first rows. `feed` arrives oldest→newest; display order is
+/// reversed here.
+fn bus_feed(
+    ui: &mut Ui,
+    t: &Tokens,
+    feed: &[BusLine],
+    pending: &[(String, usize)],
+    runtime: &Runtime,
+) {
+    ui.horizontal(|ui| {
+        widgets::chip(ui, &format!("{} running", runtime.running_count()), t.ink);
+        if pending.is_empty() {
+            widgets::chip(ui, "no pending review", t.faint);
+        } else {
+            let summary: String = format!(
+                "{} · {}",
+                pending.iter().map(|(_, count)| *count).sum::<usize>(),
+                pending
+                    .iter()
+                    .map(|(app, count)| format!("{app} · {count}"))
+                    .collect::<Vec<_>>()
+                    .join("   ")
+            );
+            widgets::badge(ui, t, &format!("AWAITING REVIEW {summary}"), Tone::Warn);
+        }
+    });
+    ui.add_space(12.0);
+
+    if feed.is_empty() {
+        ui.add_space(40.0);
+        ui.vertical_centered(|ui| {
+            widgets::hud(ui, "Quiet. No commands yet.", t.faint);
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new(
+                    "Open an app and act in it — every command lands here, human or agent.",
+                )
+                .font(fonts::body(12.0))
+                .color(t.faint),
+            );
+        });
+        return;
+    }
+
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            egui::Grid::new("nucleus-bus-grid")
+                .num_columns(5)
+                .spacing([14.0, 3.0])
+                .striped(true)
+                .show(ui, |ui| {
+                    for line in feed.iter().rev() {
+                        ui.label(
+                            RichText::new(&line.time)
+                                .font(fonts::mono(11.0))
+                                .color(t.faint),
+                        );
+                        widgets::badge(ui, t, &actor_label(line), actor_tone(&line.actor_kind));
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(command_text(line))
+                                    .font(fonts::mono(12.0))
+                                    .color(t.ink_strong),
+                            )
+                            .truncate(),
+                        );
+                        ui.label(
+                            RichText::new(&line.app)
+                                .font(fonts::mono(11.0))
+                                .color(t.muted),
+                        );
+                        widgets::badge(ui, t, &status_label(line), status_tone(&line.status));
+                        ui.end_row();
+                    }
+                });
+        });
+}
+
+fn command_text(line: &BusLine) -> String {
+    if line.label.is_empty() {
+        line.command.clone()
+    } else {
+        format!("{} — {}", line.command, line.label)
+    }
+}
+
+fn actor_label(line: &BusLine) -> String {
+    // Agents carry their provenance in the badge: "AGENT · opencode".
+    if line.actor_kind == "agent" && !line.actor_id.is_empty() {
+        format!("AGENT · {}", line.actor_id)
+    } else {
+        line.actor_kind.to_uppercase()
+    }
+}
+
+fn status_label(line: &BusLine) -> String {
+    if line.status == "applied" {
+        line.status.to_uppercase()
+    } else {
+        format!("{} · {}", line.status.to_uppercase(), "REVIEW")
+    }
+}
+
+fn actor_tone(actor_kind: &str) -> Tone {
+    match actor_kind {
+        "agent" => Tone::Info,    // the cyan accent — non-human actor
+        "human" => Tone::Neutral, // normal ink
+        _ => Tone::Faint,
+    }
+}
+
+fn status_tone(status: &str) -> Tone {
+    match status {
+        "applied" => Tone::Good,
+        "pending" => Tone::Warn,
+        "accepted" => Tone::Info,
+        "rejected" => Tone::Faint,
+        _ => Tone::Neutral,
     }
 }
 

@@ -6,7 +6,7 @@ use std::process::Child;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
-use nucleus_launcher_core::{AppMeta, LaunchKind};
+use nucleus_launcher_core::{AppMeta, LaunchKind, RunningAppRecord};
 
 use crate::ports::free_port;
 use crate::probe::READY_TIMEOUT;
@@ -25,6 +25,25 @@ pub enum Event {
     Failed(String, String),
     /// Stopped (by the user, or because the window/process exited on its own).
     Stopped(String),
+    /// The Bus (M3-lite): an applied command landed in an app's tape, seen
+    /// through its `/api/events` stream.
+    Command {
+        app: String,
+        seq: Option<u64>,
+        ts: String,
+        actor_kind: String,
+        actor_id: String,
+        command: String,
+        label: String,
+    },
+    /// The Bus (M3-lite): a proposal changed status in a running app.
+    Proposal {
+        app: String,
+        actor_kind: String,
+        actor_id: String,
+        command: String,
+        status: String,
+    },
 }
 
 /// Fixed engine options resolved once at startup.
@@ -39,6 +58,9 @@ pub struct RuntimeConfig {
     pub icon_ico: Option<PathBuf>,
     /// `%APPDATA%\Nucleus\window-profiles`.
     pub window_profiles_dir: PathBuf,
+    /// `%APPDATA%\Nucleus\run` — where the running-apps registry (§4.4) is
+    /// rewritten atomically on every start/stop/exit.
+    pub run_registry_dir: PathBuf,
     /// Shell window size, e.g. `(1440, 900)`.
     pub window_size: (u16, u16),
 }
@@ -46,6 +68,8 @@ pub struct RuntimeConfig {
 /// A live app the engine is supervising.
 struct Running {
     id: String,
+    /// Display name (registry).
+    name: String,
     /// The app process: node for servers, the command for kind=command.
     node: Option<Child>,
     /// The shell window process (server/url kinds with a window).
@@ -56,6 +80,10 @@ struct Running {
     window_pid: Option<u32>,
     port: Option<u16>,
     url: Option<String>,
+    /// Bearer token for server-kind apps (registry + Bus subscriber).
+    token: Option<String>,
+    /// ISO start stamp for the registry.
+    started_at: String,
     /// True once the readiness probe answered  the app is genuinely up.
     /// A node process that exits while this is still false is a launch
     /// failure (reported with its stderr tail), not a mere stop.
@@ -142,12 +170,15 @@ impl Runtime {
                 let id_ready = id.clone();
                 self.push_entry(Running {
                     id: id.clone(),
+                    name: name.clone(),
                     node: Some(child),
                     window: None,
                     pid: Some(pid),
                     window_pid: None,
                     port: None,
                     url: None,
+                    token: None,
+                    started_at: iso_now(),
                     ready: true,
                     stderr_tail: None,
                 });
@@ -187,12 +218,15 @@ impl Runtime {
 
                 self.push_entry(Running {
                     id: id.clone(),
+                    name: name.clone(),
                     node: Some(child),
                     window: None,
                     pid: Some(pid),
                     window_pid: None,
                     port: Some(port),
                     url: Some(url.clone()),
+                    token: Some(token.clone()),
+                    started_at: iso_now(),
                     ready: false,
                     stderr_tail,
                 });
@@ -217,6 +251,7 @@ impl Runtime {
                                 &config,
                             );
                             if let Some(id_ready) = id_ready {
+                                runtime.start_bus(&id_ready);
                                 let _ = runtime.tx.send(Event::Ready(id_ready, url));
                             }
                         }
@@ -246,12 +281,15 @@ impl Runtime {
                 let id_ready = id.clone();
                 self.push_entry(Running {
                     id: id.clone(),
+                    name: name.clone(),
                     node: None,
                     window,
                     pid: window_pid,
                     window_pid,
                     port: None,
                     url: Some(url.clone()),
+                    token: None,
+                    started_at: iso_now(),
                     ready: true,
                     stderr_tail: None,
                 });
@@ -272,6 +310,7 @@ impl Runtime {
         };
         entry.kill_all();
         let _ = self.tx.send(Event::Stopped(entry.id.clone()));
+        self.sync_registry();
         true
     }
 
@@ -342,6 +381,9 @@ impl Runtime {
             }
         }
         drop(guard);
+        if !stopped.is_empty() || !failed.is_empty() {
+            self.sync_registry();
+        }
         for id in stopped {
             let _ = self.tx.send(Event::Stopped(id));
         }
@@ -354,6 +396,53 @@ impl Runtime {
     /// already show the "running" state.
     fn push_entry(&self, entry: Running) {
         self.inner.lock().unwrap().running.push(entry);
+        self.sync_registry();
+    }
+
+    /// Attach the Bus subscriber (SSE `/api/events`, M2) to a ready
+    /// server-kind app. Best-effort: dies with the app's TCP connection.
+    pub fn start_bus(&self, id: &str) {
+        let Some((port, token)) = (|| {
+            let guard = self.inner.lock().unwrap();
+            let entry = guard.running.iter().find(|entry| entry.id == id)?;
+            Some((entry.port, entry.token.clone()))
+        })() else {
+            return;
+        };
+        if let (Some(port), Some(token)) = (port, token) {
+            crate::sse_events::spawn(id.to_string(), port, token, self.tx.clone());
+        }
+    }
+
+    /// Rewrite `%APPDATA%\Nucleus\run\apps.json` from the live supervision
+    /// state (§4.4: "on every start/stop/exit"). Full atomic replace — no
+    /// read/merge, so a corrupt file self-heals on the next change.
+    fn sync_registry(&self) {
+        let dir = self.inner.lock().unwrap().config.run_registry_dir.clone();
+        let records: Vec<RunningAppRecord> = {
+            let guard = self.inner.lock().unwrap();
+            guard
+                .running
+                .iter()
+                .map(|entry| RunningAppRecord {
+                    id: entry.id.clone(),
+                    name: entry.name.clone(),
+                    port: entry.port,
+                    token: entry.token.clone(),
+                    pid: entry.pid,
+                    started_at: entry.started_at.clone(),
+                })
+                .collect()
+        };
+        let json = nucleus_launcher_core::serialize_registry(&records);
+        if std::fs::create_dir_all(&dir).is_err() {
+            return; // no registry surface; the engine itself is unaffected
+        }
+        let tmp = dir.join("apps.json.tmp");
+        let path = dir.join("apps.json");
+        if std::fs::write(&tmp, json).is_ok() {
+            let _ = std::fs::rename(&tmp, &path); // same volume: replace-atomic
+        }
     }
 
     /// Probe succeeded: open the shell window (if wanted) and return the app
@@ -407,6 +496,7 @@ impl Runtime {
             entry.kill_all();
         }
         let _ = self.tx.send(Event::Failed(id, message));
+        self.sync_registry();
     }
 }
 
@@ -416,6 +506,15 @@ fn exited(child: &mut Option<Child>) -> bool {
         .as_mut()
         .map(|child| child.try_wait().ok().flatten().is_some())
         .unwrap_or(false)
+}
+
+/// Current wall time as RFC 3339 "Z" (registry `startedAt`).
+fn iso_now() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_secs())
+        .unwrap_or(0);
+    nucleus_launcher_core::iso8601(secs)
 }
 
 /// Exit code of a process that has already exited (`None` = still running,
@@ -500,6 +599,7 @@ mod tests {
             shell_exe: None,
             icon_ico: None,
             window_profiles_dir: std::env::temp_dir().join("nucleus-test-profiles"),
+            run_registry_dir: std::env::temp_dir().join("nucleus-test-run"),
             window_size: (100, 100),
         }
     }

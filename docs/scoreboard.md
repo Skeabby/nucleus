@@ -15,7 +15,7 @@ hand: that is the difference between a claim and a measurement.
 | Claim | Measured | Reproduce |
 |---|---|---|
 | Build, typecheck and test tasks pass | **36 / 36** | `npm run verify` |
-| TypeScript unit tests | **156** (app-kit 33 · control 14 · control-federation 10 · core 68 · launcher 16 · notes 6 · pdf 9) | `npm run test` |
+| TypeScript unit tests | **163** (app-kit 40 · control 14 · control-federation 10 · core 68 · launcher 16 · notes 6 · pdf 9) | `npm run test` |
 | Apps joined into one session → unified commands | **13 commands from 2 apps** (nucleus.pdf (pdf) · nucleus.notes (notes)) | `npm run demo:cross-app` |
 | One undo path across those apps: 4 edits in 2 apps, unwound then replayed | **9 / 9 checks passed** | `npm run demo:cross-app` |
 | Export from the edited state is a readable PDF | **3 pages read back** | `npm run demo:cross-app -- --export` |
@@ -34,7 +34,7 @@ Those land with v0.4; today's proof stops where the checks stop.
 
 | Claim | Measured | Reproduce |
 |---|---|---|
-| Rust unit tests | **110** (nucleus_launcher 71 · nucleus_launcher_core 39) | `cargo test --workspace` |
+| Rust unit tests | **126** (nucleus_launcher 73 · nucleus_launcher_core 53) | `cargo test --workspace` |
 
 The `Launcher (Rust)` workflow runs fmt, clippy (`-D warnings`), tests and a release build on
 every change under `launcher-rs/`; this section is diffed against it there.

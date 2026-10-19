@@ -7,4 +7,4 @@ pub mod views;
 pub mod widgets;
 
 pub use theme::{Tokens, configure_theme, install_fonts};
-pub use views::{Action, Counts, Facts, Filter, NodeFact, SortKey, View, ViewState};
+pub use views::{Action, BusLine, Counts, Facts, Filter, NodeFact, SortKey, View, ViewState};
