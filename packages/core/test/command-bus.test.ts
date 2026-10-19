@@ -16,6 +16,7 @@ describe("@nucleus/core command bus", () => {
       "doc.removeNode",
       "doc.stats",
       "doc.updateNodeProps",
+      "tape.restore",
     ]);
   });
 
