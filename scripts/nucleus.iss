@@ -125,9 +125,8 @@ begin
            mbInformation, MB_OK);
 end;
 
-{ {app}\nucleus.ico once staged by [Files]; empty string = default exe icon.
-  Empty must come from a real function so the icon line stays valid on any
-  install layout. }
+{ The staged nucleus.ico (see [Files]); an empty result means the default
+  exe icon, so the icon line stays valid on any install layout. }
 function IcoAppIcon(Param: String): String;
 begin
   if FileExists(ExpandConstant('{app}\nucleus.ico')) then
@@ -136,7 +135,8 @@ begin
     Result := '';
 end;
 
-function InitializeUninstall(): Boolean;begin
+function InitializeUninstall(): Boolean;
+begin
   RemoveNucleusData := False;
   { Ask before touching user data; stay silent during an unattended uninstall. }
   if not UninstallSilent() then
