@@ -668,14 +668,13 @@ mod tests {
         if std::env::var("NUCLEUS_SKIP_PROC_TESTS").is_ok() {
             return;
         }
-        let node = crate::process::known_node();
-        if node.is_none() {
-            eprintln!("node not found; skipping");
-            return;
-        }
+        // Deliberately *not* node: the property under test is that reconcile()
+        // turns an instant death into a `Failed` event carrying the exit code
+        // and the stderr tail. `cmd /c` gives the same observable shape without
+        // depending on which node shim a CI runner happens to resolve.
         let app = AppMeta {
             manifest: parse_manifest(
-                r#"{"id":"nucleus.dying","name":"Dying","version":"0.1.0","coreApiVersion":"1","launch":{"kind":"server","args":["-e","console.error('kaboom'); process.exit(3);"],"readyPath":"/api/state"}}"#,
+                r#"{"id":"nucleus.dying","name":"Dying","version":"0.1.0","coreApiVersion":"1","launch":{"kind":"server","command":"cmd","args":["/c","echo kaboom 1>&2 & exit /b 3"],"readyPath":"/api/state"}}"#,
             )
             .expect("valid"),
             dir: std::env::temp_dir(),
