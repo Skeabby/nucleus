@@ -113,6 +113,7 @@ export function registerPdfCommands(bus: CommandBus, assets: AssetStore): void {
       required: ["ids"],
       properties: { ids: { type: "array", items: pageIdParam } },
     },
+    mcp: { expose: true, name: "pdf_import_pages" },
     run(params, ctx) {
       if (!assets.has(params.sourceId)) {
         throw new NucleusError("not_found", `source not found: ${params.sourceId}`);
@@ -209,6 +210,9 @@ export function registerPdfCommands(bus: CommandBus, assets: AssetStore): void {
     reversible: true,
     params: { type: "object", required: ["id"], properties: { id: pageIdParam } },
     result: { type: "object", required: ["id"], properties: { id: pageIdParam } },
+    // Destructive but reversible — the review policy still routes agents to a
+    // proposal when the app runs in `ask` trust (§3.2).
+    mcp: { expose: true, name: "pdf_remove_page" },
     run(params, ctx) {
       if (!ctx.state.nodes[params.id]) throw new NucleusError("not_found", `page not found: ${params.id}`);
       const patches: Patch[] = [{ op: "remove", nodeId: params.id }];
@@ -238,6 +242,7 @@ export function registerPdfCommands(bus: CommandBus, assets: AssetStore): void {
         rotation: { type: "array", items: { type: "number" } },
       },
     },
+    mcp: { expose: true, name: "pdf_stats" },
     run(_params, ctx) {
       const pages = pageNodes(ctx.state);
       return {

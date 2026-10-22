@@ -41,6 +41,8 @@ export function registerNoteCommands(bus: CommandBus): void {
     },
     result: { type: "object", required: ["id"], properties: { id: noteIdParam } },
     examples: [{ params: { title: "Shopping", content: "- [ ] oat milk" } }],
+    // Curated MCP shortcut (§4.4): the common case, one tool call, no describe.
+    mcp: { expose: true, name: "note_create" },
     run(params, ctx) {
       const id = `note-${randomUUID().slice(0, 8)}`;
       const now = new Date().toISOString();
@@ -87,6 +89,7 @@ export function registerNoteCommands(bus: CommandBus): void {
       },
     },
     result: { type: "object", required: ["id"], properties: { id: noteIdParam } },
+    mcp: { expose: true, name: "note_update" },
     run(params, ctx) {
       const node = ctx.state.nodes[params.id];
       if (!node) throw new NucleusError("not_found", `note not found: ${params.id}`);

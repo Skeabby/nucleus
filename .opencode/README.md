@@ -26,18 +26,32 @@ Build the servers first:
 npm run build
 ```
 
-## `nucleus` — one app at a time
+## `nucleus` — the launcher's running apps (proxy)
+
+Reads `%APPDATA%\Nucleus\run\apps.json` and calls each app's `/api/*` with the
+bearer token the launcher minted. Nothing is linked in-process: start an app in
+the launcher and it becomes drivable, no rebuild.
 
 | Tool | Purpose |
 |------|---------|
-| `pdf_load` | Load a PDF (base64) → `{ sourceId, pageCount }` |
-| `pdf_add_pages` | Append pages from a source (omit `pages` = all) |
-| `pdf_rotate_page` | Rotate a page by relative degrees |
-| `pdf_move_page` | Move a page to a new position |
-| `pdf_remove_page` | Remove a page |
-| `pdf_state` | Read the current page list |
-| `cmd_list` | List registered command names |
-| `cmd_invoke` | Generic escape hatch for any command |
+| `nucleus_apps` | Running apps + capability summary (commands, writes, shortcuts) |
+| `nucleus_describe(app, command?)` | Commands **with their params JSON Schema** |
+| `nucleus_invoke(app, command, params, label?)` | Result, or `{ status: "proposed", proposalId }` |
+| `nucleus_proposals(app)` | Pending and decided proposals |
+| `nucleus_wait(proposalId, timeoutMs?, app?)` | Block until a proposal is decided |
+| `nucleus_tape(app, since?)` | Applied changes, with the actor |
+| `nucleus_undo(app)` | Undo one step |
+
+Curated shortcuts come from descriptors that opt in with `mcp: { expose: true }`:
+`note_create`, `note_update`, `pdf_import_pages`, `pdf_remove_page`, `pdf_stats`.
+
+An agent that writes lands in the app's **review drawer** (`ask` trust): approve
+with `A`, reject with `R`. The transcript of a full proposal → approve → tape →
+undo run is in [`../examples/mcp/transcript.md`](../examples/mcp/transcript.md),
+regenerate it with `npm run demo:mcp`.
+
+`recipe_list` / `recipe_run` from the M4 spec are **not** implemented (no engine
+behind them); compose behaviour from `nucleus_describe` + `nucleus_invoke`.
 
 ## `nucleus-federation` — every app in one session
 

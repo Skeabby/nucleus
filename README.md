@@ -115,7 +115,7 @@ powershell -File scripts\install-shortcut.ps1     # "Nucleus.lnk" on the desktop
   frontends
     launcher UI          click it
     control-cli          script it
-    control-mcp          prompt one app
+    control-mcp          prompt the apps the launcher is running
     control-federation   prompt every app in one session, one undo stack
                                 │
                                 ▼
@@ -138,6 +138,7 @@ packages/core              # document model, command bus, undo/redo, serializati
 packages/control           # ControlServer: invoke / describe / list / history
 packages/control-cli       # CLI frontend
 packages/control-mcp       # MCP frontend (dependency-free JSON-RPC 2.0 over stdio)
+                           #   proxy over run/apps.json → each app's /api/* with its bearer
 packages/control-federation # MCP frontend across apps: one session, one undo stack
 packages/control-rpc       # planned JSON-RPC frontend — README only, no code yet
 packages/pdf               # @nucleus/pdf command pack (import / rotate / move / remove / export)
@@ -187,7 +188,12 @@ cargo run --release -p nucleus-launcher      # open the native window
 Two MCP servers are registered in [`.opencode/mcp.json`](./.opencode/mcp.json) — see
 [`.opencode/README.md`](./.opencode/README.md):
 
-- `nucleus` — `control-mcp`: curated PDF tools plus a generic `cmd_invoke` escape hatch for one app.
+- `nucleus` — `control-mcp`: a **proxy** over the launcher's run registry. It finds the apps that are
+  actually running (`run/apps.json`), talks to each one over HTTP with its bearer token, and exposes
+  `nucleus_apps`, `nucleus_describe`, `nucleus_invoke`, `nucleus_proposals`, `nucleus_wait`,
+  `nucleus_tape`, `nucleus_undo` plus curated shortcuts for descriptors that opt in with `mcp.expose`
+  (`note_create`, `pdf_remove_page`, …). Agents land in the review drawer; the tape records the actor.
+  See [`examples/mcp/transcript.md`](./examples/mcp/transcript.md) for a full run.
 - `nucleus-federation` — `control-federation`: every joined app in one session, with a **single undo
   stack** across them (`apps_list`, `cmd_list`, `cmd_describe`, `cmd_invoke`, `state_get`,
   `undo_status`, `undo`, `redo` + each app's tools). Details in

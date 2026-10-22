@@ -7,10 +7,6 @@
   "bin": {
     "nucleus-mcp": "./dist/index.js"
   },
-  "dependencies": {
-    "@nucleus/core": "*",
-    "@nucleus/pdf": "*"
-  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
