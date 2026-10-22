@@ -7,8 +7,10 @@
  * is Microsoft Edge in headless mode (present on every Windows 10/11 box), so
  * there is no Playwright dependency to install or keep alive.
  *
- *   node tools/media.mjs                 # notes + social card
+ *   node tools/media.mjs                 # every screenshot + the social card
  *   node tools/media.mjs --only notes
+ *   node tools/media.mjs --only pdf
+ *   node tools/media.mjs --only image
  *   node tools/media.mjs --only social
  */
 import { spawn } from "node:child_process";
@@ -19,6 +21,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { encodePng } from "./png.mjs";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const OUT_DIR = path.join(ROOT, "docs", "media");
@@ -457,6 +460,96 @@ async function capturePdf(edge) {
 }
 
 // ---------------------------------------------------------------------------
+// Image Editor
+// ---------------------------------------------------------------------------
+
+/** A dusk landscape: gradient sky, low sun, layered hills, vignette already there. */
+function makeLandscapePng(width = 1400, height = 900) {
+  return encodePng(width, height, (x, y) => {
+    const t = y / height;
+    const sky = Math.pow(t, 0.9);
+    let r = 22 + 210 * sky;
+    let g = 26 + 120 * sky;
+    let b = 62 + 60 * (1 - sky);
+    // low sun, left of centre
+    const dx = x - width * 0.34;
+    const dy = y - height * 0.56;
+    const distance = Math.hypot(dx, dy);
+    if (distance < 190) {
+      const k = 1 - distance / 190;
+      r += 200 * k * k;
+      g += 150 * k * k;
+      b += 60 * k * k;
+    }
+    // two hill ridges, back and front
+    const ridgeBack = height * 0.62 + Math.sin(x / 210) * 40 + Math.sin(x / 71) * 12;
+    const ridgeFront = height * 0.74 + Math.sin(x / 150 + 1.6) * 55;
+    if (y > ridgeBack) {
+      const k = Math.min(1, (y - ridgeBack) / 120);
+      r = r * (1 - 0.72 * k) + 18 * k;
+      g = g * (1 - 0.66 * k) + 16 * k;
+      b = b * (1 - 0.5 * k) + 34 * k;
+    }
+    if (y > ridgeFront) {
+      const k = Math.min(1, (y - ridgeFront) / 90);
+      r = r * (1 - 0.8 * k) + 8 * k;
+      g = g * (1 - 0.78 * k) + 8 * k;
+      b = b * (1 - 0.6 * k) + 16 * k;
+    }
+    // a soft grain so the histogram is not a single spike
+    const grain = ((x * 7 + y * 13) % 9) - 4;
+    return [
+      Math.max(0, Math.min(255, Math.round(r + grain))),
+      Math.max(0, Math.min(255, Math.round(g + grain))),
+      Math.max(0, Math.min(255, Math.round(b + grain))),
+    ];
+  });
+}
+
+async function seedImage(app) {
+  const api = client(app);
+  const png = makeLandscapePng();
+  const uploaded = await api.post("/api/upload", {
+    dataBase64: png.toString("base64"),
+    name: "dusk-ridges.png",
+  });
+  await api.op("image.load", {
+    sourceId: uploaded.sourceId,
+    name: "dusk-ridges.png",
+    mime: uploaded.mime,
+    naturalWidth: 1400,
+    naturalHeight: 900,
+  });
+  // A visible grade, so the sliders in the screenshot are not all at zero.
+  await api.op("image.adjust", {
+    brightness: 8,
+    contrast: 16,
+    saturation: 10,
+    temperature: 18,
+    vignette: 22,
+  });
+}
+
+async function captureImage(edge) {
+  const appData = mkdtempSync(path.join(tmpdir(), "nucleus-media-image-"));
+  const app = await startApp("apps/image-editor", appData);
+  try {
+    await seedImage(app);
+    const out = path.join(OUT_DIR, "image-editor.png");
+    await shoot(edge, app.url, out, { settle: 2200 });
+    console.log("wrote docs/media/image-editor.png");
+  } finally {
+    app.stop();
+    await sleep(150);
+    try {
+      rmSync(appData, { recursive: true, force: true });
+    } catch {
+      /* the dying app may still hold a lock; temp gets cleaned by the OS */
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Social preview card (1280×640, GitHub's og:image size)
 // ---------------------------------------------------------------------------
 
@@ -537,10 +630,11 @@ async function main() {
   const jobs = [
     ["notes", () => captureNotes(edge)],
     ["pdf", () => capturePdf(edge)],
+    ["image", () => captureImage(edge)],
     ["social", () => captureSocial(edge)],
   ].filter(([name]) => only === null || name === only);
 
-  if (jobs.length === 0) throw new Error(`unknown --only ${only} (notes, pdf, social)`);
+  if (jobs.length === 0) throw new Error(`unknown --only ${only} (notes, pdf, image, social)`);
   for (const [name, job] of jobs) {
     process.stdout.write(`· ${name}\n`);
     await job();

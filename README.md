@@ -20,7 +20,9 @@
 <br />
 <img src="docs/media/notes.png" alt="Notes — notebooks, tags, pinned notes and a Markdown editor with live preview" width="820" />
 <br />
-<img src="docs/media/pdf-workbench.png" alt="PDF Workbench — page grid with thumbnails, rotation, selection and inspector" width="820" />
+<img src="docs/media/pdf-workbench.png" alt="PDF Workbench - page grid with thumbnails, rotation, selection and inspector" width="820" />
+<br />
+<img src="docs/media/image-editor.png" alt="Image Editor - a graded photo with histogram and adjustment sliders" width="820" />
 
 </div>
 
@@ -60,7 +62,7 @@ stack**.
 | **Nucleus launcher** | alpha | The **native Rust launcher** (`launcher-rs/`): every app in one window — grid and table views, category filter, search, Open / Stop, live log, dark + light themes, its own flat hairline design. |
 | **PDF Workbench** | beta | Import PDFs, reorder by drag, rotate, duplicate, reverse and remove whole selections — each batch is one command and one undo step — plus page preview, selection-only export, projects and per-source filtering. |
 | **Notes** | beta | Markdown notes with notebooks, tags, pin/favorite, trash + restore, full-text search, split preview, quick open, command palette and Markdown export. |
-| Image Editor | planned | Layers, masks, non-destructive adjustments and export. |
+| **Image Editor** | beta | Non-destructive crop, quarter-turn rotation, flips, resize and a grade (brightness, contrast, saturation, hue, temperature, blur, vignette) plus six named filters. A live histogram, drag-to-crop, before/after and PNG export - every slider is a coalesced bus command. |
 
 Two launchers ship: the **native Rust one** above is the default entry point, and the TypeScript
 launcher (`apps/launcher` + `packages/launcher`) from the v0.1.0 days stays in the repo as the
@@ -146,11 +148,13 @@ packages/control-mcp       # MCP frontend (dependency-free JSON-RPC 2.0 over std
 packages/control-federation # MCP frontend across apps: one session, one undo stack
 packages/control-rpc       # planned JSON-RPC frontend — README only, no code yet
 packages/pdf               # @nucleus/pdf command pack (import / rotate / move / remove / export)
+packages/image             # @nucleus/image command pack (crop / rotate / flip / resize / grade)
 packages/notes             # @nucleus/notes command pack (commands, views, markdown export)
 packages/launcher          # app discovery, manifests, process runtime, windows, CLI
 apps/launcher              # the launcher window (grid/table UI + /api/apps)
 apps/pdf-workbench         # app #1: local HTTP server + web UI
 apps/notes                 # app #2: Markdown notes on the command bus
+apps/image-editor          # app #3: non-destructive image editor on the command bus
 schemas/                   # JSON Schema - the source of truth for codegen
 tools/                     # codegen, schema validators, scoreboard
 shell/                     # native window host (WinForms + WebView2)
