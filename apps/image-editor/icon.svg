@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="112" fill="#7C5CFF"/>
+  <!-- Frame -->
+  <rect x="104" y="128" width="304" height="256" rx="18" fill="#0B0E14"/>
+  <!-- Mountains + sun: the universal "image" mark, in app accent -->
+  <circle cx="204" cy="208" r="34" fill="#7C5CFF"/>
+  <path d="M124 344 L214 252 L268 306 L312 262 L388 344 Z" fill="#7C5CFF" opacity="0.85"/>
+  <path d="M124 344 L124 366 Q124 376 134 376 L378 376 Q388 376 388 366 L388 344 Z" fill="#0B0E14"/>
+  <!-- Crop ticks, echoing the tool this app is built around -->
+  <path d="M104 176 L104 146 Q104 128 122 128 L152 128" stroke="#FFD166" stroke-width="10" fill="none" stroke-linecap="round"/>
+  <path d="M360 384 L390 384 Q408 384 408 366 L408 336" stroke="#FFD166" stroke-width="10" fill="none" stroke-linecap="round"/>
+</svg>

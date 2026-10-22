@@ -46,7 +46,7 @@
     "media": "node tools/media.mjs",
     "demo:cross-app": "node packages/control-federation/dist/demo.js",
     "bundle:apps": "node scripts/bundle-apps.mjs",
-    "check:apps": "node scripts/check-bundled-app.mjs apps/notes && node scripts/check-bundled-app.mjs apps/pdf-workbench && node scripts/check-bundled-app.mjs apps/launcher",
+    "check:apps": "node scripts/check-bundled-app.mjs apps/notes && node scripts/check-bundled-app.mjs apps/pdf-workbench && node scripts/check-bundled-app.mjs apps/image-editor && node scripts/check-bundled-app.mjs apps/launcher",
     "shell": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-shell.ps1",
     "shell:fetch": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/fetch-webview2.ps1",
     "shortcut": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-shortcut.ps1"

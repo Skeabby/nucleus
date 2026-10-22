@@ -1,0 +1,21 @@
+{
+  "name": "@nucleus/image-editor",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/server.js",
+  "dependencies": {
+    "@nucleus/app-kit": "*",
+    "@nucleus/control": "*",
+    "@nucleus/core": "*",
+    "@nucleus/image": "*"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/server.js",
+    "dev": "node dist/server.js",
+    "test": "vitest run --passWithNoTests",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\""
+  }
+}

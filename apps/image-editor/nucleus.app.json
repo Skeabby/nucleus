@@ -1,0 +1,29 @@
+{
+  "id": "nucleus.image",
+  "name": "Image Editor",
+  "version": "0.1.0",
+  "coreApiVersion": "1",
+  "description": "Crop, rotate, flip, resize, grade and export images non-destructively.",
+  "author": "Nucleus",
+  "category": "image",
+  "status": "beta",
+  "inspiredBy": "Photoshop",
+  "icon": "icon.svg",
+  "launch": {
+    "kind": "server",
+    "args": [
+      "dist/server.js"
+    ],
+    "window": true,
+    "readyPath": "/api/state"
+  },
+  "permissions": [
+    "fs"
+  ],
+  "capabilities": [
+    "image.edit",
+    "image.export"
+  ],
+  "minShell": "0.1.0",
+  "updateChannel": "stable"
+}

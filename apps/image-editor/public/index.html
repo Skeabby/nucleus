@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Image Editor — Nucleus</title>
+    <link rel="stylesheet" href="/_kit/kit.css" />
+    <link rel="stylesheet" href="/_kit/craft.css" />
+    <style>
+      /* App accent: image violet (kit may inject --nk-accent at runtime). */
+      :root { --nk-app-accent: #7c5cff; }
+    </style>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div class="c-app">
+
+      <!-- ── Toolstrip ─────────────────────────────────────────────── -->
+      <header class="c-strip">
+        <div class="c-brand">
+          <span class="c-brand__mark"></span>
+          <span class="c-brand__name">Image&nbsp;Editor</span>
+          <span class="c-brand__sub">nucleus</span>
+        </div>
+
+        <span class="c-tsep"></span>
+
+        <div class="c-tgroup">
+          <label class="c-btn c-btn--accent" for="file-input" title="Open an image (or drop / paste one)">+ Open image</label>
+          <input id="file-input" type="file" accept="image/*" hidden />
+          <label class="c-btn" for="project-input" title="Open a saved project">Open…</label>
+          <input id="project-input" type="file" accept=".json,application/json" hidden />
+          <button class="c-btn" id="save" title="Download the project (.nucleus.json)">Save…</button>
+        </div>
+
+        <span class="c-tsep"></span>
+
+        <div class="c-tgroup">
+          <button class="c-btn c-btn--icon" id="undo" title="Undo (Ctrl+Z)" disabled>↶</button>
+          <button class="c-btn c-btn--icon" id="redo" title="Redo (Ctrl+Shift+Z)" disabled>↷</button>
+        </div>
+
+        <span class="c-tsep"></span>
+
+        <div class="c-tgroup">
+          <button class="c-btn" id="rot-left" title="Rotate left (Shift+R)" disabled>↺ 90</button>
+          <button class="c-btn" id="rot-right" title="Rotate right (R)" disabled>↻ 90</button>
+          <button class="c-btn" id="flip-h" title="Flip horizontal (H)" disabled>Flip H</button>
+          <button class="c-btn" id="flip-v" title="Flip vertical (V)" disabled>Flip V</button>
+          <button class="c-btn" id="reset" title="Reset every edit (keeps the source)" disabled>Reset</button>
+        </div>
+
+        <div class="c-strip__spring"></div>
+
+        <button class="c-btn" id="palette" title="Command palette (Ctrl+K)">⌘K</button>
+        <span class="c-tsep"></span>
+        <button class="c-btn c-btn--accent" id="export" title="Export a PNG of the result (Ctrl+E)" disabled>Export PNG</button>
+      </header>
+
+      <!-- ── Main: tools · stage · inspector ───────────────────────── -->
+      <div class="c-main">
+
+        <aside class="c-rail">
+          <div class="c-panelhead">
+            <span>Tools</span>
+            <span class="c-chip" id="edits-count">0</span>
+          </div>
+          <div class="c-rail__body" id="tools"></div>
+          <div class="c-rail__foot c-rail__foot--stack">
+            <div class="c-tools__meta" id="rail-meta">No image</div>
+            <button class="c-btn" id="rail-reset" disabled>Reset all edits</button>
+          </div>
+        </aside>
+
+        <main class="c-canvas i-stage" id="stage">
+          <div id="empty" class="c-empty" style="padding:40px">
+            <div class="c-empty__kick">02 / develop</div>
+            <h1>Pixels, non-destructively.</h1>
+            <p>Drop an image, paste one, or open a file. Crop, turn, grade and export — every change is a bus command, so undo is free and an agent can drive the same sliders.</p>
+            <p class="c-empty__hint"><kbd>Ctrl</kbd>+<kbd>V</kbd> paste · <kbd>R</kbd> rotate · <kbd>H</kbd>/<kbd>V</kbd> flip · <kbd>Ctrl</kbd>+<kbd>E</kbd> export · nothing leaves this machine.</p>
+          </div>
+
+          <div id="work" hidden>
+            <canvas id="view"></canvas>
+
+            <!-- Crop overlay: draw, move and resize a rectangle in source space -->
+            <div id="crop-overlay" hidden>
+              <div id="crop-box">
+                <span class="crop-handle" data-handle="nw"></span>
+                <span class="crop-handle" data-handle="ne"></span>
+                <span class="crop-handle" data-handle="sw"></span>
+                <span class="crop-handle" data-handle="se"></span>
+                <span class="crop-size" id="crop-size"></span>
+              </div>
+            </div>
+
+            <div class="i-stagebar" id="stagebar">
+              <span class="c-chip" id="zoom-chip">Fit</span>
+              <button class="c-btn c-btn--icon" id="zoom-out" title="Zoom out (Ctrl+-)">−</button>
+              <button class="c-btn c-btn--icon" id="zoom-in" title="Zoom in (Ctrl++)">+</button>
+              <button class="c-btn" id="zoom-fit" title="Fit to window (Ctrl+0)">Fit</button>
+              <span class="c-tsep"></span>
+              <button class="c-btn" id="hold-before" title="Hold to see the original (or hold \\)">Before</button>
+            </div>
+
+            <div class="i-cropbar" id="cropbar" hidden>
+              <span class="i-cropbar__label">Crop</span>
+              <button class="c-btn" data-aspect="free">Free</button>
+              <button class="c-btn" data-aspect="1:1">1:1</button>
+              <button class="c-btn" data-aspect="4:3">4:3</button>
+              <button class="c-btn" data-aspect="16:9">16:9</button>
+              <button class="c-btn" data-aspect="3:2">3:2</button>
+              <span class="c-strip__spring"></span>
+              <button class="c-btn" id="crop-cancel">Cancel</button>
+              <button class="c-btn c-btn--accent" id="crop-apply">Apply crop</button>
+            </div>
+          </div>
+        </main>
+
+        <aside class="c-inspector">
+          <div class="c-panelhead">
+            <span id="inspector-title">Inspector</span>
+            <span class="c-chip" id="inspector-chip">—</span>
+          </div>
+          <div class="c-inspector__body" id="inspector"></div>
+          <div class="c-inspector__foot">
+            <span class="c-chip" id="bus-chip">human</span>
+            <span style="font-size:11px;color:var(--c-faint)">every action is a bus command</span>
+          </div>
+        </aside>
+      </div>
+
+      <!-- ── Status bar ────────────────────────────────────────────── -->
+      <footer class="c-status">
+        <span class="c-dot" id="dot"></span>
+        <span id="status">Ready</span>
+        <span class="c-status__spring"></span>
+        <span id="counter"></span>
+        <span>⌘K commands · Ctrl+Z undo · \ hold for before</span>
+      </footer>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+    <script src="/_kit/kit.js" defer></script>
+  </body>
+</html>
