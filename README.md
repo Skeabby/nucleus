@@ -19,6 +19,8 @@
 <img src="docs/screenshot-table.png" alt="The Nucleus launcher, sortable table view" width="820" />
 <br />
 <img src="docs/media/notes.png" alt="Notes — notebooks, tags, pinned notes and a Markdown editor with live preview" width="820" />
+<br />
+<img src="docs/media/pdf-workbench.png" alt="PDF Workbench — page grid with thumbnails, rotation, selection and inspector" width="820" />
 
 </div>
 
@@ -56,7 +58,7 @@ stack**.
 | App | Status | What it does |
 |-----|--------|--------------|
 | **Nucleus launcher** | alpha | The **native Rust launcher** (`launcher-rs/`): every app in one window — grid and table views, category filter, search, Open / Stop, live log, dark + light themes, its own flat hairline design. |
-| **PDF Workbench** | beta | Merge, reorder, rotate, delete pages, undo/redo, save/open projects, export. |
+| **PDF Workbench** | beta | Import PDFs, reorder by drag, rotate, duplicate, reverse and remove whole selections — each batch is one command and one undo step — plus page preview, selection-only export, projects and per-source filtering. |
 | **Notes** | beta | Markdown notes with notebooks, tags, pin/favorite, trash + restore, full-text search, split preview, quick open, command palette and Markdown export. |
 | Image Editor | planned | Layers, masks, non-destructive adjustments and export. |
 

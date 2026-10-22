@@ -13,11 +13,12 @@
  */
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const OUT_DIR = path.join(ROOT, "docs", "media");
@@ -58,6 +59,11 @@ async function waitFor(check, timeoutMs, label) {
 
 /** Start an app exactly like the launcher does (PORT + NUCLEUS_TOKEN). */
 async function startApp(dir, appData) {
+  // `public/_kit` is generated at bundle time; refresh it so a local run shows
+  // the same chrome as the shipped payload.
+  cpSync(path.join(ROOT, "packages", "app-kit", "kit"), path.join(ROOT, dir, "public", "_kit"), {
+    recursive: true,
+  });
   const port = await freePort();
   const token = randomUUID().replace(/-/g, "");
   const child = spawn(process.execPath, ["dist/server.js"], {
@@ -93,14 +99,18 @@ async function startApp(dir, appData) {
 function client(app) {
   const headers = { authorization: `Bearer ${app.token}`, "content-type": "application/json" };
   return {
-    async op(name, params = {}) {
-      const response = await fetch(`http://127.0.0.1:${app.port}/api/op`, {
+    async post(urlPath, body) {
+      const response = await fetch(`http://127.0.0.1:${app.port}${urlPath}`, {
         method: "POST",
         headers,
-        body: JSON.stringify({ name, params }),
+        body: JSON.stringify(body ?? {}),
       });
-      const body = await response.json();
-      if (!body.ok) throw new Error(`${name}: ${JSON.stringify(body.error)}`);
+      const payload = await response.json();
+      if (!payload.ok) throw new Error(`${urlPath}: ${JSON.stringify(payload.error)}`);
+      return payload;
+    },
+    async op(name, params = {}) {
+      const body = await this.post("/api/op", { name, params });
       return body.result?.result ?? body.result;
     },
   };
@@ -113,7 +123,7 @@ function client(app) {
  * stream open forever — the capture would never happen. CDP lets us navigate,
  * wait a beat, then grab the frame (and close the target) deterministically.
  */
-async function shoot(edge, url, outFile, { width = 1600, height = 1000, settle = 1500 } = {}) {
+async function shoot(edge, url, outFile, { width = 1600, height = 1000, settle = 1500, evaluate = null } = {}) {
   const port = await freePort();
   const profile = mkdtempSync(path.join(tmpdir(), "nucleus-media-profile-"));
   const browser = spawn(
@@ -184,6 +194,18 @@ async function shoot(edge, url, outFile, { width = 1600, height = 1000, settle =
     });
     await send("Page.navigate", { url });
     await sleep(settle);
+    if (evaluate) {
+      await send("Runtime.enable");
+      const outcome = await send("Runtime.evaluate", {
+        expression: evaluate,
+        awaitPromise: true,
+        returnByValue: true,
+      });
+      if (outcome.result?.exceptionDetails) {
+        throw new Error(`page script failed: ${JSON.stringify(outcome.result.exceptionDetails)}`);
+      }
+      await sleep(700);
+    }
     const frame = await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
     if (!frame.result?.data) throw new Error(`no screenshot data (${JSON.stringify(frame.error ?? {})})`);
     writeFileSync(outFile, Buffer.from(frame.result.data, "base64"));
@@ -310,6 +332,131 @@ async function captureNotes(edge) {
 }
 
 // ---------------------------------------------------------------------------
+// PDF Workbench
+// ---------------------------------------------------------------------------
+
+/** A believable report: title block, a bar chart, a footer per page. */
+async function makeReportPdf() {
+  const doc = await PDFDocument.create();
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const body = await doc.embedFont(StandardFonts.Helvetica);
+  const accent = rgb(0.13, 0.83, 0.93);
+
+  const cover = doc.addPage([595, 842]);
+  cover.drawRectangle({ x: 0, y: 640, width: 595, height: 202, color: rgb(0.09, 0.08, 0.13) });
+  cover.drawText("NUCLEUS", { x: 54, y: 760, size: 12, font: bold, color: accent });
+  cover.drawText("Annual", { x: 54, y: 700, size: 46, font: bold, color: rgb(1, 1, 1) });
+  cover.drawText("report 2026", { x: 54, y: 660, size: 46, font: bold, color: rgb(1, 1, 1) });
+  cover.drawText("Figures, decisions and the year ahead.", { x: 54, y: 120, size: 13, font: body, color: rgb(0.35, 0.35, 0.4) });
+
+  for (let i = 2; i <= 6; i += 1) {
+    const page = doc.addPage([595, 842]);
+    page.drawText(`0${i}`, { x: 54, y: 770, size: 10, font: bold, color: accent });
+    page.drawText(["Revenue", "Retention", "Shipping", "Costs", "Outlook"][i - 2] ?? "Notes", {
+      x: 54,
+      y: 726,
+      size: 26,
+      font: bold,
+      color: rgb(0.12, 0.12, 0.16),
+    });
+    page.drawLine({ start: { x: 54, y: 706 }, end: { x: 541, y: 706 }, thickness: 1, color: rgb(0.85, 0.85, 0.88) });
+
+    // A small chart so every thumbnail has visual structure.
+    const bars = 5 + (i % 3);
+    for (let b = 0; b < bars; b += 1) {
+      const height = 40 + ((b * 37 + i * 29) % 150);
+      page.drawRectangle({
+        x: 70 + b * 62,
+        y: 420,
+        width: 34,
+        height,
+        color: b % 3 === 0 ? accent : rgb(0.36, 0.33, 0.95),
+      });
+    }
+    for (let line = 0; line < 9; line += 1) {
+      page.drawRectangle({
+        x: 54,
+        y: 250 - line * 18,
+        width: 380 - ((line * 53) % 140),
+        height: 7,
+        color: rgb(0.88, 0.88, 0.91),
+      });
+    }
+    page.drawText(`Page ${i} of 6 — nucleus`, { x: 54, y: 40, size: 8, font: body, color: rgb(0.6, 0.6, 0.65) });
+  }
+  return doc.save();
+}
+
+async function makeContractPdf() {
+  const doc = await PDFDocument.create();
+  const body = await doc.embedFont(StandardFonts.Helvetica);
+  for (let i = 1; i <= 2; i += 1) {
+    const page = doc.addPage([842, 595]);
+    page.drawText("SERVICE AGREEMENT", { x: 54, y: 520, size: 18, font: body, color: rgb(0.12, 0.12, 0.16) });
+    for (let line = 0; line < 14; line += 1) {
+      page.drawRectangle({
+        x: 54,
+        y: 470 - line * 22,
+        width: 640 - ((line * 71) % 260),
+        height: 6,
+        color: rgb(0.86, 0.86, 0.9),
+      });
+    }
+    page.drawText(`Exhibit ${String.fromCharCode(64 + i)}`, { x: 54, y: 40, size: 9, font: body, color: rgb(0.55, 0.55, 0.6) });
+  }
+  return doc.save();
+}
+
+async function seedPdf(app) {
+  const api = client(app);
+  const uploads = [
+    { name: "Annual report.pdf", bytes: await makeReportPdf(), rotate: [2] },
+    { name: "Contract.pdf", bytes: await makeContractPdf(), rotate: [] },
+  ];
+
+  for (const upload of uploads) {
+    const loaded = await api.post("/api/load", {
+      dataBase64: Buffer.from(upload.bytes).toString("base64"),
+      name: upload.name,
+    });
+    const pages = Array.from({ length: loaded.pageCount }, (_, index) => index);
+    const imported = await api.op("pdf.importPages", {
+      sourceId: loaded.sourceId,
+      pages,
+      name: upload.name,
+    });
+    if (upload.rotate.length > 0) {
+      const ids = upload.rotate.map((index) => imported.ids[index]).filter(Boolean);
+      await api.op("pdf.rotatePages", { ids, degrees: 90 });
+    }
+  }
+}
+
+async function capturePdf(edge) {
+  const appData = mkdtempSync(path.join(tmpdir(), "nucleus-media-pdf-"));
+  const app = await startApp("apps/pdf-workbench", appData);
+  try {
+    await seedPdf(app);
+    const out = path.join(OUT_DIR, "pdf-workbench.png");
+    // Select one page so the screenshot shows the inspector and batch bar in use.
+    await shoot(edge, app.url, out, {
+      settle: 2600,
+      evaluate:
+        "document.querySelectorAll('.c-card')[1]?.dispatchEvent(new MouseEvent('click', { bubbles: true })); 'ok'",
+    });
+    console.log("wrote docs/media/pdf-workbench.png");
+  } finally {
+    app.stop();
+    await sleep(150);
+    try {
+      rmSync(appData, { recursive: true, force: true });
+    } catch {
+      /* the dying app may still hold a lock; temp gets cleaned by the OS */
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Social preview card (1280×640, GitHub's og:image size)
 // ---------------------------------------------------------------------------
 
@@ -389,10 +536,11 @@ async function main() {
 
   const jobs = [
     ["notes", () => captureNotes(edge)],
+    ["pdf", () => capturePdf(edge)],
     ["social", () => captureSocial(edge)],
   ].filter(([name]) => only === null || name === only);
 
-  if (jobs.length === 0) throw new Error(`unknown --only ${only} (notes, social)`);
+  if (jobs.length === 0) throw new Error(`unknown --only ${only} (notes, pdf, social)`);
   for (const [name, job] of jobs) {
     process.stdout.write(`· ${name}\n`);
     await job();
