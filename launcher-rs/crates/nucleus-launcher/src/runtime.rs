@@ -688,8 +688,11 @@ mod tests {
         let (runtime, rx) = Runtime::new(config());
         runtime.launch(&app).unwrap();
 
-        // pump the engine the way the UI does, until the failure lands
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        // Pump the engine the way the UI does, until the failure lands. The
+        // window must stay below the probe's READY_TIMEOUT (20 s): catching the
+        // death through reconcile is what makes this "fast". CI runners are
+        // slow to spin up a node process, so allow a generous margin.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
         let mut failed: Option<Event> = None;
         while std::time::Instant::now() < deadline {
             runtime.reconcile();
