@@ -43,6 +43,7 @@
     "mcp": "node packages/control-mcp/dist/index.js",
     "mcp:federation": "node packages/control-federation/dist/mcp.js",
     "demo:mcp": "node tools/mcp-demo.mjs",
+    "media": "node tools/media.mjs",
     "demo:cross-app": "node packages/control-federation/dist/demo.js",
     "bundle:apps": "node scripts/bundle-apps.mjs",
     "check:apps": "node scripts/check-bundled-app.mjs apps/notes && node scripts/check-bundled-app.mjs apps/pdf-workbench && node scripts/check-bundled-app.mjs apps/launcher",
