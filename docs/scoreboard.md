@@ -34,7 +34,7 @@ Those land with v0.4; today's proof stops where the checks stop.
 
 | Claim | Measured | Reproduce |
 |---|---|---|
-| Rust unit tests | **126** (nucleus_launcher 73 · nucleus_launcher_core 53) | `cargo test --workspace` |
+| Rust unit tests | **128** (nucleus_launcher 75 · nucleus_launcher_core 53) | `cargo test --workspace` |
 
 The `Launcher (Rust)` workflow runs fmt, clippy (`-D warnings`), tests and a release build on
 every change under `launcher-rs/`; this section is diffed against it there.
