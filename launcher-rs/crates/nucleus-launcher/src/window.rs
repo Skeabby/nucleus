@@ -7,6 +7,9 @@ use std::process::{Child, Command, Stdio};
 /// Expected window size for app windows (SPEC: `--size 1440x900`).
 pub const APP_WINDOW_SIZE: (u16, u16) = (1440, 900);
 
+/// How long the shell gets to prove it is alive before we assume it died.
+const DEAD_SHELL_GRACE: std::time::Duration = std::time::Duration::from_millis(700);
+
 /// Open `url` in its own desktop window.
 ///
 /// Preferred: `nucleus-shell.exe` with a per-app `--user-data-dir` (WebView2
@@ -40,10 +43,25 @@ pub fn open_app_window(
         if let Some(ico) = icon_ico {
             command.arg("--icon").arg(ico);
         }
-        return command.spawn().ok();
+        let Ok(mut child) = command.spawn() else {
+            return open_in_browser(url);
+        };
+        // The shell is a small .NET assembly that exits immediately when its
+        // WebView2 companions are missing (an installer bug once shipped that
+        // way). Give it a moment: if it is already gone, open the app in the
+        // default browser instead of leaving the user with nothing at all.
+        std::thread::sleep(DEAD_SHELL_GRACE);
+        match child.try_wait() {
+            Ok(Some(_)) => open_in_browser(url),
+            _ => Some(child),
+        }
+    } else {
+        open_in_browser(url)
     }
+}
 
-    // Last resort: hand the URL to the default browser, untracked.
+/// Server the URL to the default browser, untracked, because no shell can.
+fn open_in_browser(url: &str) -> Option<Child> {
     let _ = Command::new("cmd")
         .args(["/c", "start", "", url])
         .stdin(Stdio::null())
