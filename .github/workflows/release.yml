@@ -68,16 +68,24 @@ jobs:
       - name: Pack app archives
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           $exe = "launcher-rs\target\release\nucleus-launcher.exe"
           New-Item -ItemType Directory -Force -Path launcher-rs\mirror\apps | Out-Null
-          Get-ChildItem apps -Directory | ForEach-Object {
-            $app = $_.FullName
-            if (-not (Test-Path (Join-Path $app "nucleus.app.json"))) { return }
-            $id = ($_ | Get-Content (Join-Path $app "nucleus.app.json") | ConvertFrom-Json).id
-            $ver = ($_ | Get-Content (Join-Path $app "nucleus.app.json") | ConvertFrom-Json).version
-            & $exe --pack $app --out ("launcher-rs\mirror\apps\{0}-{1}-win64.nucleusapp" -f $id, $ver)
-            if ($LASTEXITCODE -ne 0) { throw "pack failed for $id" }
+          $packed = 0
+          foreach ($entry in Get-ChildItem apps -Directory) {
+            # `apps/launcher` is the legacy TypeScript shell, replaced by the
+            # Rust launcher itself — it is never shipped as a `.nucleusapp`.
+            if ($entry.Name -eq "launcher") { continue }
+            $manifestPath = Join-Path $entry.FullName "nucleus.app.json"
+            if (-not (Test-Path -LiteralPath $manifestPath)) { continue }
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+            $out = "launcher-rs\mirror\apps\{0}-{1}-win64.nucleusapp" -f $manifest.id, $manifest.version
+            & $exe --pack $entry.FullName --out $out
+            if ($LASTEXITCODE -ne 0) { throw "pack failed for $($manifest.id)" }
+            $packed++
           }
+          if ($packed -eq 0) { throw "no app packaged" }
+          Write-Host "packed $packed app(s)"
 
       - name: Generate catalogue
         shell: pwsh
