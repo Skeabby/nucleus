@@ -78,6 +78,18 @@ Source: "{#ScriptDir}..\assets\nucleus-shell.exe"; DestDir: "{app}"; Flags: igno
 #if FileExists(AddBackslash(ScriptDir) + "..\assets\nucleus.ico")
 Source: "{#ScriptDir}..\assets\nucleus.ico"; DestDir: "{app}"; Flags: ignoreversion
 #endif
+; `nucleus-shell.exe` is a small .NET assembly: the WebView2 managed assemblies
+; and the native loader MUST sit next to it or it dies before opening a window
+; (the launcher would then report a "launch" that looks like nothing happened).
+#if FileExists(AddBackslash(ScriptDir) + "..\assets\Microsoft.Web.WebView2.Core.dll")
+Source: "{#ScriptDir}..\assets\Microsoft.Web.WebView2.Core.dll"; DestDir: "{app}"; Flags: ignoreversion
+#endif
+#if FileExists(AddBackslash(ScriptDir) + "..\assets\Microsoft.Web.WebView2.WinForms.dll")
+Source: "{#ScriptDir}..\assets\Microsoft.Web.WebView2.WinForms.dll"; DestDir: "{app}"; Flags: ignoreversion
+#endif
+#if FileExists(AddBackslash(ScriptDir) + "..\assets\WebView2Loader.dll")
+Source: "{#ScriptDir}..\assets\WebView2Loader.dll"; DestDir: "{app}"; Flags: ignoreversion
+#endif
 
 ; The icon lives in {app} (see [Files]) when staged; the code: function keeps
 ; the shortcut valid even on a tree where the ico was somehow absent.
