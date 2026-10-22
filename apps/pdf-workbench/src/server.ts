@@ -49,7 +49,12 @@ try {
       }
 
       if (url.pathname === "/api/export" && req.method === "GET") {
-        const bytes = await exportPdf(s.doc, s.assets as MemoryAssetStore);
+        // `?ids=a,b,c` exports just that selection (one PDF, same page order).
+        const only = (url.searchParams.get("ids") ?? "")
+          .split(",")
+          .map((id) => id.trim())
+          .filter((id) => id !== "");
+        const bytes = await exportPdf(s.doc, s.assets as MemoryAssetStore, only.length > 0 ? only : undefined);
         if (bytes.length === 0) {
           res.writeHead(400, { "content-type": "application/json" });
           res.end(JSON.stringify({ ok: false, error: { kind: "validation", message: "document is empty" } }));
@@ -57,7 +62,7 @@ try {
         }
         res.writeHead(200, {
           "content-type": "application/pdf",
-          "content-disposition": 'attachment; filename="workbench.pdf"',
+          "content-disposition": `attachment; filename="${only.length > 0 ? "selection" : "workbench"}.pdf"`,
         });
         res.end(Buffer.from(bytes));
         return true;

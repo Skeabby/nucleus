@@ -1,26 +1,130 @@
-/* PDF Workbench — app-specific visuals. The chrome lives in /_kit/craft.css. */
+/* PDF Workbench 2.0 — app-specific visuals. The chrome lives in /_kit/craft.css. */
+
+/* `hidden` must win over the component display rules below. */
+[hidden] { display: none !important; }
 
 .c-zoom-seg { margin-right: 6px; }
 .c-zoom-seg > button { padding: 5px 8px; font-family: var(--c-mono); font-size: 10px; }
 
-/* Source rows in the rail reuse craft.c-row; add derive cue */
+.c-help-inline { font-family: var(--c-mono); font-size: 10px; color: var(--c-faint); }
+
+/* Source rows in the rail reuse craft .c-row; add per-source tools */
 .c-row .c-row__count { font-family: var(--c-mono); font-size: 10px; color: var(--c-faint); }
 .c-row[aria-current="true"] { border-left-color: var(--c-cyan, #22d3ee); }
+.c-row__tools { display: none; gap: 3px; margin-left: auto; }
+.c-row:hover .c-row__tools { display: flex; }
+.c-row:hover .c-row__meta { display: none; }
+
+.c-mini {
+  font-family: var(--c-mono);
+  font-size: 10px;
+  line-height: 1;
+  color: var(--c-muted);
+  border: 1px solid var(--c-line);
+  padding: 2px 5px;
+  cursor: pointer;
+}
+.c-mini:hover { color: var(--c-text-strong); border-color: var(--c-line-strong); background: var(--c-panel); }
 
 /* Empty help block inside inspector */
 .c-help { padding: 10px var(--c-rail-pad); }
 .c-help p { margin: 0 0 8px; color: var(--c-muted); font-size: 11.5px; }
 .c-help p b { color: var(--c-text); }
 
+/* Inspector action rows */
+.c-actions { display: flex; gap: 6px; padding: 6px 12px; }
+.c-actions .c-btn { flex: 1; font-size: 11px; padding: 4px 6px; }
+
 /* Card thumb sizing */
 .c-cardslist { --thumb-w: 180px; }
 .c-cardslist[data-zoom="s"] { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; }
 .c-cardslist[data-zoom="m"] { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 18px; }
 .c-cardslist[data-zoom="l"] { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 22px; }
+
 .card-drag-image { opacity: 0.85; }
+
+/* Page card extras: orientation badge + previewed ring */
+.c-card { display: flex; flex-direction: column; }
+
+/* Fixed portrait frame: portrait pages fill it, landscape pages letterbox, so
+   a mixed document keeps a straight baseline instead of a ragged grid. */
+.c-card__thumbwrap { aspect-ratio: 0.72; min-height: 0; }
+.c-card__thumb { max-width: 100%; max-height: 100%; object-fit: contain; }
+.c-card__meta { margin-top: auto; }
+
+.c-card__dim {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  font-family: var(--c-mono);
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--c-text);
+  background: color-mix(in srgb, var(--c-ink) 78%, transparent);
+  border: 1px solid var(--c-line);
+  padding: 1px 4px;
+}
+.c-card.is-previewed { box-shadow: inset 0 0 0 1px var(--c-accent); }
 
 /* Drop feedback when dragging PDF files over the canvas */
 .c-canvas.--dragover {
   outline: 1px dashed var(--c-accent);
   outline-offset: -6px;
+}
+
+/* Page preview overlay */
+.p-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: color-mix(in srgb, #0b0912 82%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 22px;
+}
+
+.p-sheet {
+  width: min(1120px, 94vw);
+  height: min(92vh, 100%);
+  display: flex;
+  flex-direction: column;
+  background: var(--c-surface);
+  border: 1px solid var(--c-line-strong);
+}
+
+.p-sheet__bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--c-line);
+  background: var(--c-panel);
+}
+.p-sheet__label {
+  font-family: var(--c-mono);
+  font-size: 11px;
+  color: var(--c-text);
+  letter-spacing: 0.04em;
+}
+
+.p-sheet__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: #0e0c15;
+}
+.p-sheet__body canvas { box-shadow: 0 0 0 1px var(--c-line-strong); background: #fff; }
+
+.p-sheet__foot {
+  border-top: 1px solid var(--c-line);
+  padding: 6px 10px;
+  background: var(--c-panel);
+  font-family: var(--c-mono);
+  font-size: 10px;
+  color: var(--c-muted);
 }
