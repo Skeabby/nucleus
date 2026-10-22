@@ -192,7 +192,9 @@ async function appSummary(client: AppClient): Promise<Record<string, unknown>> {
       startedAt: client.app.startedAt,
       reachable: true,
       commands: commands.length,
-      writes: commands.filter((command) => command.sideEffects === "write").length,
+      // Anything that is not a pure read can change the document — including
+      // `destructive` removes, which a naive `=== "write"` check would miss.
+      writes: commands.filter((command) => command.sideEffects !== "read").length,
       shortcuts: commands.filter((command) => command.mcp?.expose).length,
     };
   } catch (error) {
