@@ -113,6 +113,12 @@ kbd {
   height: 100vh;
 }
 
+/* The shared tape scrubber is fixed to the bottom edge; when it is visible the
+   app gives up that strip so its own status bar is not buried underneath. */
+body:has(#nk-scrubber.nk-visible) .c-app {
+  height: calc(100vh - 46px);
+}
+
 /* Toolstrip: groups separated by hairlines, launcher style */
 .c-strip {
   display: flex;

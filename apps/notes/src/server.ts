@@ -7,7 +7,16 @@
  */
 import { fileURLToPath } from "node:url";
 import { createAppServer } from "@nucleus/app-kit";
-import { createNotesSession, exportNotesMarkdown, noteViews, NOTES_PROJECT_FORMAT, type NotesSession } from "@nucleus/notes";
+import {
+  createNotesSession,
+  exportNotesMarkdown,
+  notebookViews,
+  noteViews,
+  notesStats,
+  NOTES_PROJECT_FORMAT,
+  tagViews,
+  type NotesSession,
+} from "@nucleus/notes";
 
 const PUBLIC_DIR = fileURLToPath(new URL("../public", import.meta.url));
 
@@ -23,7 +32,18 @@ try {
     projectFormat: NOTES_PROJECT_FORMAT,
     createSession: () => {
       const s = session();
-      return { ...s, snapshot: () => ({ notes: noteViews(s.doc) }) };
+      return {
+        ...s,
+        // One snapshot for the whole library: the UI filters locally, so a
+        // keystroke in the search box never costs a round-trip. Trashed notes
+        // ride along and are hidden by the view instead of by the payload.
+        snapshot: () => ({
+          notes: noteViews(s.doc, { trashed: true }),
+          notebooks: notebookViews(s.doc),
+          tags: tagViews(s.doc),
+          stats: notesStats(s.doc),
+        }),
+      };
     },
     // App-specific: export the whole notebook as one Markdown file.
     routes: async (req, res, url, s) => {

@@ -17,6 +17,8 @@
 <img src="docs/screenshot-launcher.png" alt="The Nucleus launcher, grid view grouped by category" width="820" />
 <br />
 <img src="docs/screenshot-table.png" alt="The Nucleus launcher, sortable table view" width="820" />
+<br />
+<img src="docs/media/notes.png" alt="Notes — notebooks, tags, pinned notes and a Markdown editor with live preview" width="820" />
 
 </div>
 
@@ -55,7 +57,7 @@ stack**.
 |-----|--------|--------------|
 | **Nucleus launcher** | alpha | The **native Rust launcher** (`launcher-rs/`): every app in one window — grid and table views, category filter, search, Open / Stop, live log, dark + light themes, its own flat hairline design. |
 | **PDF Workbench** | beta | Merge, reorder, rotate, delete pages, undo/redo, save/open projects, export. |
-| **Notes** | alpha | Markdown notes with undo/redo, live preview and Markdown export. |
+| **Notes** | beta | Markdown notes with notebooks, tags, pin/favorite, trash + restore, full-text search, split preview, quick open, command palette and Markdown export. |
 | Image Editor | planned | Layers, masks, non-destructive adjustments and export. |
 
 Two launchers ship: the **native Rust one** above is the default entry point, and the TypeScript
