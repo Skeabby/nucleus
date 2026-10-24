@@ -2,6 +2,10 @@
 // Every mutation goes through /api/op (bus commands), so the tape, undo and
 // agent proposals see exactly what the human sees.
 //
+// The chrome is not this app's business any more. NucleusShell owns the menubar,
+// the options bar, the panel, the status bar and every shortcut; this file only
+// describes *what* Notes can do (menus + context) and paints the editor.
+//
 // Editor generations (F4): `localRev` bumps on every keystroke, `sentRev`
 // tracks the last generation successfully saved. They only differ while a
 // save is in flight — exactly when the server must not clobber the textarea.
@@ -11,6 +15,8 @@
 // ---------------------------------------------------------------------------
 
 const EMPTY_STATS = { notes: 0, notebooks: 0, favorites: 0, pinned: 0, trashed: 0, tags: 0, words: 0 };
+
+const MODES = ["edit", "split", "preview"];
 
 let state = {
   notes: [],
@@ -29,27 +35,42 @@ let activeId = null;
 let localRev = 0;
 let sentRev = 0;
 
-/** Editor layout: write | split | read (Ctrl+E cycles). */
-let viewMode = "write";
+/** Layout: edit | split | preview (persisted through the shell's settings). */
+let viewMode = window.innerWidth >= 1100 ? "split" : "edit";
 
-/** Pending auto-save timer. */
+/** Pending auto-save timer + the two things the options bar reports. */
 let saveTimer = null;
+let saving = false;
+let dirty = false;
+let lastSavedAt = null;
 
-/** Library filters. */
-let scope = "all"; // all | favorites | trash
-let notebookFilter = null; // notebook id, "unfiled", or null (no filter)
-let tagFilter = null;
+/**
+ * The library filter — one dropdown, one dimension (brief #3 §4.2):
+ *   { kind: "all" } · { kind: "favorites" } · { kind: "trash" }
+ *   { kind: "book", id: string | null }   (null = Unfiled)
+ *   { kind: "tag", tag: string }
+ */
+let filter = { kind: "all" };
 let sortMode = "updated";
 let query = "";
 
-/** Multi-select + bulk move mode. */
+/** Multi-select (Ctrl/Shift click) for bulk trash/restore. */
 const selection = new Set();
-let bulkMoveMode = false;
 let lastClicked = null;
 
 /** Quick-open overlay state. */
 let quickIndex = 0;
 let quickResults = [];
+
+/** Details popover. */
+let detailsOpen = false;
+
+/** Status bar state (the shell paints it). */
+let status = { text: "Ready", kind: "ready" };
+
+/** Live panel nodes, kept so search can repaint the list without a rebuild. */
+let listNode = null;
+let countChip = null;
 
 // ---------------------------------------------------------------------------
 // DOM refs
@@ -57,47 +78,42 @@ let quickResults = [];
 
 const $ = (sel) => document.querySelector(sel);
 
-const noteList = $("#note-list");
-const bookList = $("#notebook-list");
-const tagList = $("#tag-list");
-const searchInput = $("#search");
-const searchClear = $("#search-clear");
+const workspace = $("#workspace");
+const emptyHost = $("#empty");
+const notePanel = $("#note-panel");
 const titleInput = $("#title-input");
 const editor = $("#editor");
 const editorBody = $("#n-body");
 const preview = $("#preview");
-const emptyState = $("#empty-state");
-const editorDepth = $("#editor-depth");
-const undoBtn = $("#undo");
-const redoBtn = $("#redo");
-const exportBtn = $("#export");
-const saveProjectBtn = $("#save-project");
-const projectInput = $("#project-input");
-const statusEl = $("#status");
-const dotEl = $("#dot");
-const metaEl = $("#meta");
-const noteCountEl = $("#note-count");
-const scopeTitleEl = $("#scope-title");
-const scopeSeg = $("#scope-seg");
-const inspectorEl = $("#inspector");
-const railStats = $("#rail-stats");
-const bulkBar = $("#bulk-bar");
-const bulkCount = $("#bulk-count");
-const pinBtn = $("#pin-toggle");
-const favBtn = $("#fav-toggle");
+const noteUpdatedEl = $("#note-updated");
+const detailsEl = $("#details");
+const detailsToggle = $("#details-toggle");
+const detailCreated = $("#detail-created");
+const detailUpdated = $("#detail-updated");
 const noteBookSelect = $("#note-book");
 const noteTagsEl = $("#note-tags");
 const tagInput = $("#tag-input");
-const noteUpdatedEl = $("#note-updated");
-const editorCount = $("#editor-count");
-const noteFootLeft = $("#note-foot-left");
-const noteFootRight = $("#note-foot-right");
-const sortSelect = $("#sort");
+const projectInput = $("#project-input");
 const quickOverlay = $("#quick");
 const quickInput = $("#quick-input");
 const quickListEl = $("#quick-list");
-const clearTagBtn = $("#clear-tag");
-const tagsSection = $("#tags-section");
+
+// The search field is one node for the app's whole life: the shell re-appends
+// it on every context change instead of cloning it, so its value survives.
+const searchField = document.createElement("div");
+searchField.className = "nk-search";
+const searchInput = document.createElement("input");
+searchInput.type = "search";
+searchInput.placeholder = "Search notes…";
+searchInput.setAttribute("aria-label", "Search notes");
+searchInput.spellcheck = false;
+const searchClear = document.createElement("button");
+searchClear.type = "button";
+searchClear.className = "nk-search__clear";
+searchClear.title = "Clear search";
+searchClear.textContent = "×";
+searchClear.hidden = true;
+searchField.append(searchInput, searchClear);
 
 // ---------------------------------------------------------------------------
 // API helpers
@@ -288,15 +304,22 @@ function matchesQuery(note, terms) {
 
 function visibleNotes() {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
-  let list = scope === "trash" ? state.notes.filter((note) => note.trashedAt) : liveNotes();
-  if (scope === "favorites") list = list.filter((note) => note.favorite);
-  if (notebookFilter === "unfiled") list = list.filter((note) => !note.notebookId);
-  else if (notebookFilter) list = list.filter((note) => note.notebookId === notebookFilter);
-  if (tagFilter) list = list.filter((note) => (note.tags ?? []).includes(tagFilter));
+  let list;
+  if (filter.kind === "trash") {
+    list = state.notes.filter((note) => note.trashedAt);
+  } else {
+    list = liveNotes();
+    if (filter.kind === "favorites") list = list.filter((note) => note.favorite);
+    else if (filter.kind === "book") {
+      list = list.filter((note) => (filter.id ? note.notebookId === filter.id : !note.notebookId));
+    } else if (filter.kind === "tag") {
+      list = list.filter((note) => (note.tags ?? []).includes(filter.tag));
+    }
+  }
   list = list.filter((note) => matchesQuery(note, terms));
 
   return [...list].sort((a, b) => {
-    if (scope !== "trash") {
+    if (filter.kind !== "trash") {
       const pinned = Number(b.pinned) - Number(a.pinned);
       if (pinned !== 0) return pinned;
     }
@@ -311,7 +334,12 @@ function currentNote() {
 }
 
 function notebookName(id) {
+  if (!id) return "Unfiled";
   return state.notebooks.find((book) => book.id === id)?.title ?? "Unfiled";
+}
+
+function plural(count, noun) {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -358,150 +386,270 @@ function highlight(text, terms) {
   return html;
 }
 
-function propRow(label, value) {
-  return (
-    `<div class="c-prop"><span class="c-prop__label">${esc(label)}</span>` +
-    `<span class="c-prop__value">${value}</span></div>`
-  );
-}
-
-function helpBlock() {
-  return (
-    '<div class="c-help">' +
-    "<p><kbd>Ctrl</kbd>+<kbd>N</kbd> note · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> notebook</p>" +
-    "<p><kbd>Ctrl</kbd>+<kbd>P</kbd> quick open · <kbd>Ctrl</kbd>+<kbd>K</kbd> commands</p>" +
-    "<p><kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate · <kbd>Ctrl</kbd>+<kbd>E</kbd> layout</p>" +
-    "<p><kbd>Ctrl</kbd>+<kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd> All · Favorites · Trash</p>" +
-    "</div>"
-  );
+/** "Saved just now" / "Saving…" / "Unsaved changes" — the options bar's hint. */
+function savedLabel(note) {
+  if (saving) return "Saving…";
+  if (dirty) return "Unsaved changes";
+  if (lastSavedAt) {
+    const mins = Math.floor((Date.now() - lastSavedAt) / 60_000);
+    return mins < 1 ? "Saved just now" : `Saved ${mins}m ago`;
+  }
+  // Nothing typed in this session yet: the server's stamp is the truth.
+  return note?.updatedAt ? `Saved ${relativeDate(note.updatedAt)}` : "Saved";
 }
 
 // ---------------------------------------------------------------------------
-// Rendering
+// Shell context
 // ---------------------------------------------------------------------------
 
-function renderScopes() {
-  for (const button of scopeSeg.querySelectorAll("button")) {
-    button.setAttribute("aria-pressed", String(button.dataset.scope === scope));
-  }
-  scopeTitleEl.textContent =
-    scope === "trash" ? "Trash" : scope === "favorites" ? "Favorites" : "All notes";
-  searchInput.placeholder =
-    scope === "trash" ? "Search the trash…" : scope === "favorites" ? "Search favorites…" : "Search notes…";
+function sync(options) {
+  // Panels are rebuilt by the shell; pass { panels: false } while the list is
+  // being repainted for a keystroke that cannot change it.
+  window.NucleusShell?.setContext(
+    {
+      note: activeId,
+      trashed: Boolean(currentNote()?.trashedAt),
+      mode: viewMode,
+      selection: [...selection],
+      filter: filter.kind,
+      query,
+      sort: sortMode,
+      count: visibleNotes().length,
+      canUndo: Boolean(state.canUndo),
+      canRedo: Boolean(state.canRedo),
+      stats: state.stats ?? EMPTY_STATS,
+      details: detailsOpen,
+    },
+    options,
+  );
 }
 
-function renderNotebooks() {
-  const counts = new Map();
-  for (const note of liveNotes()) {
-    const key = note.notebookId ?? "unfiled";
-    counts.set(key, (counts.get(key) ?? 0) + 1);
+function setStatus(text, kind = "ready", duration = 0) {
+  status = { text, kind };
+  sync();
+  if (duration > 0) {
+    setTimeout(() => {
+      if (status.text === text) {
+        status = { text: "Ready", kind: "ready" };
+        sync();
+      }
+    }, duration);
   }
-
-  const rows = [
-    `<button class="n-book" data-book="unfiled" aria-current="${notebookFilter === "unfiled"}">` +
-      `<span class="n-book__dot"></span><span class="n-book__name">Unfiled</span>` +
-      `<span class="n-book__count">${counts.get("unfiled") ?? 0}</span></button>`,
-  ];
-  for (const book of state.notebooks) {
-    rows.push(
-      `<button class="n-book" data-book="${esc(book.id)}" aria-current="${notebookFilter === book.id}">` +
-        `<span class="n-book__dot"></span>` +
-        `<span class="n-book__name" title="Double-click to rename">${esc(book.title)}</span>` +
-        `<span class="n-book__count">${book.noteCount}</span>` +
-        `<span class="n-book__tools">` +
-        `<span class="n-mini" data-book-rename="${esc(book.id)}" title="Rename">✎</span>` +
-        `<span class="n-mini" data-book-delete="${esc(book.id)}" title="Delete notebook">×</span>` +
-        `</span></button>`,
-    );
-  }
-  bookList.innerHTML = rows.join("");
 }
 
-function renderTags() {
-  if (state.tags.length === 0) {
-    tagList.innerHTML = '<span class="n-foot-note">no tags yet — add one on a note</span>';
-    clearTagBtn.hidden = true;
-    return;
-  }
-  tagList.innerHTML = state.tags
-    .map(
-      (entry) =>
-        `<button class="n-tag" data-tag="${esc(entry.tag)}" aria-pressed="${tagFilter === entry.tag}">` +
-        `${esc(entry.tag)}<span class="n-tag__count">${entry.count}</span></button>`,
-    )
-    .join("");
-  clearTagBtn.hidden = tagFilter === null;
+function markError(message) {
+  status = { text: message, kind: "error" };
+  window.NucleusKit?.toast(message, "error");
+  sync();
 }
 
-function renderNoteList() {
-  const notes = visibleNotes();
+// ---------------------------------------------------------------------------
+// Panel: the library (one dropdown, one list)
+// ---------------------------------------------------------------------------
+
+function panelHead(title, count) {
+  const head = document.createElement("div");
+  head.className = "c-panelhead";
+  const label = document.createElement("span");
+  label.textContent = title;
+  head.appendChild(label);
+  if (count !== undefined) {
+    const chip = document.createElement("span");
+    chip.className = "c-chip";
+    chip.textContent = String(count);
+    head.appendChild(chip);
+  }
+  return head;
+}
+
+function filterValue() {
+  if (filter.kind === "book") return filter.id ? `book:${filter.id}` : "book:unfiled";
+  if (filter.kind === "tag") return `tag:${filter.tag}`;
+  if (filter.kind === "favorites") return "scope:favorites";
+  if (filter.kind === "trash") return "scope:trash";
+  return "scope:all";
+}
+
+function parseFilter(value) {
+  const [kind, ...rest] = String(value).split(":");
+  const arg = rest.join(":");
+  if (kind === "book") return { kind: "book", id: arg === "unfiled" || arg === "" ? null : arg };
+  if (kind === "tag") return { kind: "tag", tag: arg };
+  if (arg === "favorites" || arg === "trash") return { kind: arg };
+  return { kind: "all" };
+}
+
+function optionGroup(label, entries) {
+  const group = document.createElement("optgroup");
+  group.label = label;
+  for (const [value, text] of entries) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = text;
+    group.appendChild(option);
+  }
+  return group;
+}
+
+function filterSelect() {
+  const wrap = document.createElement("div");
+  wrap.className = "n-filter";
+  const select = document.createElement("select");
+  select.className = "n-filter__select";
+  select.setAttribute("aria-label", "Filter notes");
+
+  select.appendChild(optionGroup("Show", [
+    ["scope:all", "All notes"],
+    ["scope:favorites", "Favorites"],
+    ["scope:trash", "Trash"],
+  ]));
+  const books = [["book:unfiled", "Unfiled"]];
+  for (const book of state.notebooks) books.push([`book:${book.id}`, book.title]);
+  select.appendChild(optionGroup("Notebooks", books));
+  if (state.tags.length > 0) {
+    select.appendChild(optionGroup("Tags", state.tags.map((entry) => [`tag:${entry.tag}`, `#${entry.tag} (${entry.count})`])));
+  }
+
+  select.value = filterValue();
+  select.addEventListener("change", () => {
+    filter = parseFilter(select.value);
+    selection.clear();
+    lastClicked = null;
+    if (activeId && !visibleNotes().some((note) => note.id === activeId)) activeId = null;
+    render();
+  });
+
+  wrap.appendChild(select);
+  return wrap;
+}
+
+function emptyListMessage() {
+  if (query !== "") return "Nothing matches your search.";
+  if (filter.kind === "trash") return "The trash is empty.";
+  if (filter.kind === "favorites") return "No favorites yet — Edit → Favorite note.";
+  if (filter.kind === "book") return "No note in this notebook yet.";
+  if (filter.kind === "tag") return "No note carries this tag yet.";
+  return "No notes yet — Ctrl N starts one.";
+}
+
+function noteRow(note, index) {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
-  noteCountEl.textContent = String(notes.length);
+  const row = document.createElement("button");
+  row.type = "button";
+  row.className = "c-row";
+  row.dataset.id = note.id;
+  // The visible index, not the absolute one: shift-click ranges follow the list.
+  row.dataset.index = String(index);
+  row.setAttribute("role", "option");
+  row.setAttribute("aria-selected", String(selection.has(note.id) || note.id === activeId));
+  if (note.trashedAt) row.classList.add("is-trashed");
+  if (note.pinned) row.classList.add("is-pinned");
+  if (selection.has(note.id)) row.classList.add("is-selected");
 
+  const title = document.createElement("span");
+  title.className = "c-row__title";
+  title.innerHTML =
+    highlight(note.title || "Untitled", terms) +
+    (note.favorite ? '<span class="n-star" title="Favorite">★</span>' : "");
+
+  const meta = document.createElement("span");
+  meta.className = "c-row__meta";
+  const snippet = document.createElement("span");
+  snippet.className = "c-row__snippet";
+  snippet.innerHTML = highlight(note.snippet || "No content", terms);
+  const time = document.createElement("span");
+  time.className = "c-row__time";
+  time.textContent = relativeDate(note.trashedAt || note.updatedAt);
+  meta.append(snippet, time);
+
+  row.append(title, meta);
+  return row;
+}
+
+function fillRows(body) {
+  const notes = visibleNotes();
   if (notes.length === 0) {
-    const message =
-      query !== ""
-        ? "Nothing matches your search."
-        : scope === "trash"
-          ? "The trash is empty."
-          : scope === "favorites"
-            ? "No favorites yet — press FAVORITE on a note."
-            : notebookFilter || tagFilter
-              ? "No note in this filter."
-              : "No notes yet — Ctrl+N.";
-    noteList.innerHTML = `<div class="c-help" style="padding:10px 12px;color:var(--c-faint);font-size:11.5px">${message}</div>`;
+    const empty = document.createElement("p");
+    empty.className = "c-help n-list__empty";
+    empty.textContent = emptyListMessage();
+    body.replaceChildren(empty);
     return;
   }
-
-  noteList.innerHTML = notes
-    .map((note) => {
-      const selected = selection.has(note.id) || note.id === activeId;
-      const flags =
-        (note.pinned ? '<span class="n-dot n-dot--pin">PIN</span>' : "") +
-        (note.favorite ? '<span class="n-dot n-dot--fav">FAV</span>' : "");
-      const tags = note.tags.length > 0 ? ` · ${note.tags.map((tag) => `#${tag}`).join(" ")}` : "";
-      return (
-        `<button class="c-row${note.trashedAt ? " is-trashed" : ""}${selection.has(note.id) ? " is-selected" : ""}"` +
-        ` data-id="${esc(note.id)}" draggable="${!note.trashedAt}"` +
-        ` role="option" aria-selected="${selected}">` +
-        `<span class="c-row__check"></span>` +
-        `<span class="c-row__title">${highlight(note.title || "Untitled", terms)}</span>` +
-        `<span class="c-row__meta">` +
-        `<span class="c-row__snippet">${highlight(note.snippet || "No content", terms)}${esc(tags)}</span>` +
-        (flags ? `<span class="c-row__flags">${flags}</span>` : "") +
-        `<span class="c-row__time">${relativeDate(note.trashedAt || note.updatedAt)}</span>` +
-        `</span>` +
-        `</button>`
-      );
-    })
-    .join("");
-
-  noteList.classList.toggle("n-selecting", selection.size > 0);
+  body.replaceChildren(...notes.map((note, index) => noteRow(note, index)));
 }
 
-function renderBulkBar() {
-  const count = selection.size;
-  bulkBar.hidden = count === 0;
-  if (count === 0) {
-    bulkMoveMode = false;
-    return;
-  }
-  bulkCount.textContent = `${count} selected`;
-  for (const button of bulkBar.querySelectorAll("[data-bulk]")) {
-    if (button.dataset.bulk === "trash") {
-      button.textContent = scope === "trash" ? "Restore" : "Trash";
-      button.hidden = false;
-    }
-    if (button.dataset.bulk === "move") button.hidden = scope === "trash";
-  }
+function renderListOnly() {
+  if (!listNode) return;
+  fillRows(listNode);
+  if (countChip) countChip.textContent = String(visibleNotes().length);
 }
 
-function renderViewMode() {
+function bulkBar() {
+  const bar = document.createElement("div");
+  bar.className = "n-bulk";
+  const label = document.createElement("span");
+  label.className = "n-bulk__count";
+  label.textContent = `${selection.size} selected`;
+
+  const action = document.createElement("button");
+  action.type = "button";
+  action.className = "c-btn";
+  action.textContent = filter.kind === "trash" ? "Restore" : "Trash";
+  action.addEventListener("click", () => void bulkApply());
+
+  const clear = document.createElement("button");
+  clear.type = "button";
+  clear.className = "c-btn";
+  clear.textContent = "Clear";
+  clear.addEventListener("click", () => {
+    selection.clear();
+    lastClicked = null;
+    render();
+  });
+
+  bar.append(label, action, clear);
+  return bar;
+}
+
+function notesPanel(ctx) {
+  if (ctx.panel === "history") {
+    listNode = null;
+    countChip = null;
+    return null; // the shell paints History itself
+  }
+
+  const wrap = document.createElement("div");
+  wrap.className = "n-panel";
+
+  const head = panelHead("Notes", visibleNotes().length);
+  countChip = head.querySelector(".c-chip");
+  wrap.appendChild(head);
+  wrap.appendChild(filterSelect());
+
+  const body = document.createElement("div");
+  body.className = "c-rail__body n-list";
+  body.id = "note-list";
+  body.setAttribute("role", "listbox");
+  body.setAttribute("aria-label", "Notes");
+  body.setAttribute("aria-multiselectable", "true");
+  listNode = body;
+  fillRows(body);
+  body.addEventListener("click", onRowClick);
+  wrap.appendChild(body);
+
+  if (selection.size > 0) wrap.appendChild(bulkBar());
+  return wrap;
+}
+
+// ---------------------------------------------------------------------------
+// Editor rendering
+// ---------------------------------------------------------------------------
+
+function renderMode() {
   editorBody.dataset.mode = viewMode;
-  for (const button of document.querySelectorAll("#view-seg button")) {
-    button.setAttribute("aria-pressed", String(button.dataset.mode === viewMode));
-  }
-  if (viewMode !== "write" && activeId) renderPreview();
+  // The header follows the layout: in split it lines up with the editor half.
+  notePanel.dataset.mode = viewMode;
+  if (viewMode !== "edit") renderPreview();
 }
 
 function renderPreview() {
@@ -509,19 +657,57 @@ function renderPreview() {
   preview.innerHTML = renderMarkdown(editor.value);
 }
 
+function renderDetails(note) {
+  detailsEl.hidden = !detailsOpen;
+  detailsToggle.setAttribute("aria-expanded", String(detailsOpen));
+  if (!note) return;
+
+  detailCreated.textContent = shortDate(note.createdAt);
+  detailUpdated.textContent = shortDate(note.updatedAt);
+
+  const options = [document.createElement("option")];
+  options[0].value = "";
+  options[0].textContent = "Unfiled";
+  for (const book of state.notebooks) {
+    const option = document.createElement("option");
+    option.value = book.id;
+    option.textContent = book.title;
+    options.push(option);
+  }
+  noteBookSelect.replaceChildren(...options);
+  noteBookSelect.value = note.notebookId ?? "";
+  noteBookSelect.disabled = Boolean(note.trashedAt);
+
+  const chips = note.tags.map((tag) => {
+    const chip = document.createElement("span");
+    chip.className = "n-tagchip";
+    chip.appendChild(document.createTextNode(tag));
+    if (!note.trashedAt) {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.title = "Remove tag";
+      remove.textContent = "×";
+      remove.addEventListener("click", () => void removeTag(tag));
+      chip.appendChild(remove);
+    }
+    return chip;
+  });
+  noteTagsEl.replaceChildren(...chips);
+  tagInput.hidden = Boolean(note.trashedAt);
+}
+
 function renderEditor() {
   const note = currentNote();
 
   if (!note) {
-    emptyState.style.display = "";
-    editorDepth.hidden = true;
+    emptyHost.hidden = false;
+    notePanel.hidden = true;
     activeId = null;
-    renderInspector(null);
     return;
   }
 
-  emptyState.style.display = "none";
-  editorDepth.hidden = false;
+  emptyHost.hidden = true;
+  notePanel.hidden = false;
 
   // Never clobber unsent typing: only take server text when every local edit
   // has been saved (F4). Otherwise a save round-trip can drop keystrokes.
@@ -532,129 +718,28 @@ function renderEditor() {
   titleInput.readOnly = Boolean(note.trashedAt);
   editor.readOnly = Boolean(note.trashedAt);
 
-  pinBtn.setAttribute("aria-pressed", String(note.pinned));
-  favBtn.setAttribute("aria-pressed", String(note.favorite));
   noteUpdatedEl.textContent = note.trashedAt
-    ? `trashed ${relativeDate(note.trashedAt)}`
+    ? `in trash · ${relativeDate(note.trashedAt)}`
     : `edited ${relativeDate(note.updatedAt)}`;
 
-  noteBookSelect.innerHTML =
-    `<option value="">Unfiled</option>` +
-    state.notebooks
-      .map((book) => `<option value="${esc(book.id)}">${esc(book.title)}</option>`)
-      .join("");
-  noteBookSelect.value = note.notebookId ?? "";
-  noteBookSelect.disabled = Boolean(note.trashedAt);
-
-  noteTagsEl.innerHTML = note.tags
-    .map(
-      (tag) =>
-        `<span class="n-tagchip">${esc(tag)}` +
-        (note.trashedAt ? "" : `<button data-tagremove="${esc(tag)}" title="Remove tag">×</button>`) +
-        `</span>`,
-    )
-    .join("");
-  tagInput.hidden = Boolean(note.trashedAt);
-
-  renderViewMode();
-  renderCounts(note);
-  renderInspector(note);
-}
-
-function renderCounts(note) {
-  const words = countWords(editor.value);
-  const reading = words === 0 ? 0 : Math.max(1, Math.round(words / 200));
-  editorCount.textContent = `${words} words`;
-  noteFootLeft.textContent = `${words} words · ${reading} min read · ${editor.value.length} chars`;
-  noteFootRight.textContent = note.trashedAt ? "read-only (in trash)" : "autosaves · every edit is one step";
-}
-
-function renderInspector(note) {
-  const stats = state.stats ?? EMPTY_STATS;
-  const documentBlock =
-    '<div class="c-section">Document</div>' +
-    propRow("Notes", String(stats.notes)) +
-    propRow("Notebooks", String(stats.notebooks)) +
-    propRow("Favorites", String(stats.favorites)) +
-    propRow("In trash", String(stats.trashed)) +
-    propRow("Tags", String(stats.tags)) +
-    propRow("Words", String(stats.words));
-
-  if (!note) {
-    inspectorEl.innerHTML =
-      '<div class="c-section">Nothing open</div>' +
-      propRow("Can undo", state.canUndo ? "yes" : "no") +
-      documentBlock +
-      '<div class="c-section">Shortcuts</div>' +
-      helpBlock();
-    return;
-  }
-
-  const actions = note.trashedAt
-    ? '<div class="n-actions">' +
-      '<button class="c-btn" data-act="restore">Restore</button>' +
-      '<button class="c-btn c-btn--danger" data-act="purge">Delete forever</button>' +
-      "</div>"
-    : '<div class="n-actions">' +
-      '<button class="c-btn" data-act="duplicate">Duplicate</button>' +
-      '<button class="c-btn" data-act="trash">Move to trash</button>' +
-      "</div>";
-
-  inspectorEl.innerHTML =
-    '<div class="c-section">Note</div>' +
-    propRow("Notebook", esc(notebookName(note.notebookId))) +
-    propRow("Pinned", note.pinned ? "yes" : "no") +
-    propRow("Favorite", note.favorite ? "yes" : "no") +
-    propRow("Created", esc(shortDate(note.createdAt))) +
-    propRow("Updated", esc(shortDate(note.updatedAt))) +
-    propRow("Node", `<code>${esc(note.id)}</code>`) +
-    '<div class="c-section">Metrics</div>' +
-    propRow("Words", String(countWords(note.content))) +
-    propRow("Characters", String(note.content.length)) +
-    propRow("Lines", String(note.content.split("\n").length)) +
-    propRow("Reading", `${note.readingMinutes} min`) +
-    actions +
-    documentBlock +
-    '<div class="c-section">Shortcuts</div>' +
-    helpBlock();
-}
-
-function renderChrome() {
-  undoBtn.disabled = !state.canUndo;
-  redoBtn.disabled = !state.canRedo;
-  const stats = state.stats ?? EMPTY_STATS;
-  railStats.textContent = `${stats.notes} notes · ${stats.words} words · ${stats.favorites} fav`;
-  metaEl.textContent = `${stats.notes} note${stats.notes === 1 ? "" : "s"} · ${stats.notebooks} notebook${stats.notebooks === 1 ? "" : "s"} · ${stats.trashed} in trash`;
+  renderDetails(note);
+  renderMode();
 }
 
 function render() {
-  renderScopes();
-  renderNotebooks();
-  renderTags();
-  renderNoteList();
-  renderBulkBar();
   renderEditor();
-  renderChrome();
+  sync();
 }
 
 // ---------------------------------------------------------------------------
 // Actions
 // ---------------------------------------------------------------------------
 
-function setStatus(message, duration = 2000) {
-  statusEl.textContent = message;
-  if (duration > 0) setTimeout(() => {
-    if (statusEl.textContent === message) statusEl.textContent = "Ready";
-  }, duration);
-}
-
 function applyState(data) {
   if (!data.ok) {
-    dotEl.classList.add("c-dot--err");
-    setStatus(`Error: ${data.error?.message ?? data.error ?? "unknown"}`);
+    markError(`Error: ${data.error?.message ?? data.error ?? "unknown"}`);
     return false;
   }
-  dotEl.classList.remove("c-dot--err");
   state = {
     notes: data.notes ?? [],
     notebooks: data.notebooks ?? [],
@@ -667,6 +752,10 @@ function applyState(data) {
   // Drop ids that no longer exist (undo of a creation, purge, project load).
   for (const id of [...selection]) if (!state.notes.some((note) => note.id === id)) selection.delete(id);
   if (activeId && !state.notes.some((note) => note.id === activeId)) activeId = null;
+  if (filter.kind === "book" && filter.id && !state.notebooks.some((book) => book.id === filter.id)) {
+    filter = { kind: "all" };
+  }
+  if (filter.kind === "tag" && !state.tags.some((entry) => entry.tag === filter.tag)) filter = { kind: "all" };
   render();
   return true;
 }
@@ -677,7 +766,7 @@ async function refresh() {
 
 async function openNote(id) {
   if (id === activeId) {
-    editor.focus();
+    if (viewMode !== "preview") editor.focus();
     return;
   }
   // Pending edits belong to the note we're leaving; flush them first so they
@@ -687,12 +776,14 @@ async function openNote(id) {
   activeId = id;
   localRev = 0;
   sentRev = 0;
+  dirty = false;
   render();
-  editor.focus();
+  if (viewMode !== "preview") editor.focus();
 }
 
 function scheduleSave() {
   localRev += 1;
+  dirty = true;
   clearTimeout(saveTimer);
   saveTimer = setTimeout(flushSave, 600);
 }
@@ -703,27 +794,35 @@ async function flushSave() {
   const note = currentNote();
   if (!note || note.trashedAt) return; // read-only in the trash
   const rev = localRev;
-  // The note.update command coalesces a burst into one undo step server-side,
-  // so no client-side key is needed.
-  const data = await op("note.update", {
-    id: activeId,
-    title: titleInput.value,
-    content: editor.value,
-  }, "Edit note");
-  applyState(data);
-  // Only claim these edits are saved if no keystroke landed mid-flight.
-  sentRev = Math.max(sentRev, rev);
-  if (rev === localRev) setStatus("Saved", 1200);
+  saving = true;
+  sync();
+  try {
+    // The note.update command coalesces a burst into one undo step server-side,
+    // so no client-side key is needed.
+    const data = await op("note.update", {
+      id: activeId,
+      title: titleInput.value,
+      content: editor.value,
+    }, "Edit note");
+    applyState(data);
+    // Only claim these edits are saved if no keystroke landed mid-flight.
+    sentRev = Math.max(sentRev, rev);
+    if (rev === localRev) {
+      dirty = false;
+      lastSavedAt = Date.now();
+      setStatus("Saved", "ready", 1200);
+    }
+  } finally {
+    saving = false;
+    sync();
+  }
 }
 
-async function createNote(overrides = {}) {
-  const params = {
-    title: "Untitled",
-    content: "",
-    ...(notebookFilter && notebookFilter !== "unfiled" ? { notebookId: notebookFilter } : {}),
-    ...(tagFilter ? { tags: [tagFilter] } : {}),
-    ...overrides,
-  };
+async function createNote() {
+  if (filter.kind === "trash") filter = { kind: "all" };
+  const params = { title: "Untitled", content: "" };
+  if (filter.kind === "book" && filter.id) params.notebookId = filter.id;
+  if (filter.kind === "tag") params.tags = [filter.tag];
   const data = await op("note.create", params, "New note");
   const created = commandResult(data);
   if (applyState(data) && created?.id) {
@@ -736,6 +835,7 @@ async function createNote(overrides = {}) {
 async function duplicateNote() {
   const note = currentNote();
   if (!note) return;
+  await flushSave().catch(() => {});
   const data = await op("note.duplicate", { id: note.id }, "Duplicate note");
   const copy = commandResult(data);
   if (applyState(data) && copy?.id) await openNote(copy.id);
@@ -749,7 +849,7 @@ async function trashNote() {
   const data = await op("note.trash", { id: note.id }, "Move to trash");
   activeId = null;
   applyState(data);
-  setStatus("Moved to trash — Ctrl+Z to undo");
+  setStatus("Moved to trash — Ctrl Z undoes it");
 }
 
 async function restoreNote() {
@@ -763,11 +863,10 @@ async function restoreNote() {
 async function purgeNote() {
   const note = currentNote();
   if (!note) return;
-  if (!confirm(`Delete "${note.title || "this note"}" forever?`)) return;
   const data = await op("note.purge", { id: note.id }, "Delete note forever");
   activeId = null;
   applyState(data);
-  setStatus("Deleted forever — Ctrl+Z still works in this session");
+  setStatus("Deleted forever — Ctrl Z still works this session");
 }
 
 async function setFlags(patch) {
@@ -775,6 +874,7 @@ async function setFlags(patch) {
   if (!note) return;
   const data = await op("note.setFlags", { id: note.id, ...patch }, "Update flags");
   applyState(data);
+  setStatus(patch.pinned === true ? "Pinned" : patch.pinned === false ? "Unpinned" : "Updated");
 }
 
 async function setNotebook(id) {
@@ -804,113 +904,218 @@ async function removeTag(tag) {
 
 async function undo() {
   clearTimeout(saveTimer);
-  applyState(await apiFetch("/api/undo", { method: "POST" }));
-  setStatus("Undone");
+  const data = await apiFetch("/api/undo", { method: "POST" });
+  if (applyState(data)) {
+    dirty = false;
+    lastSavedAt = Date.now();
+    setStatus("Undone");
+  }
 }
 
 async function redo() {
   clearTimeout(saveTimer);
-  applyState(await apiFetch("/api/redo", { method: "POST" }));
-  setStatus("Redone");
+  const data = await apiFetch("/api/redo", { method: "POST" });
+  if (applyState(data)) {
+    dirty = false;
+    lastSavedAt = Date.now();
+    setStatus("Redone");
+  }
 }
 
 // --- notebooks --------------------------------------------------------------
 
-/** Inline input for create (no id) or rename (id). */
-function inlineBookInput(mode, id) {
-  const existing = bookList.querySelector(".n-bookinput");
-  if (existing) existing.remove();
-  const holder = document.createElement("div");
-  holder.className = "n-books";
-  holder.style.padding = "0 8px";
-  holder.innerHTML = `<input class="n-bookinput" placeholder="${mode === "create" ? "Notebook name" : "New name"}" />`;
-  bookList.before(holder);
-  const input = holder.querySelector("input");
-  const value = mode === "rename" ? notebookName(id === "" ? null : id) : "";
-  input.value = mode === "rename" ? value : "";
-  input.focus();
-  input.select();
-
-  const done = async (commit) => {
-    const title = input.value.trim();
-    holder.remove();
-    if (!commit || title === "") return;
-    const data =
-      mode === "create"
-        ? await op("notebook.create", { title }, "New notebook")
-        : await op("notebook.rename", { id, title }, "Rename notebook");
-    applyState(data);
-    setStatus(mode === "create" ? `Notebook "${title}" created` : "Notebook renamed");
-  };
-
-  input.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") { event.preventDefault(); void done(true); }
-    if (event.key === "Escape") { event.preventDefault(); void done(false); }
+async function createNotebook() {
+  const title = await window.NucleusShell.ask({
+    title: "New notebook",
+    body: "A notebook groups notes in the filter above the list.",
+    placeholder: "Notebook name",
+    confirmLabel: "Create notebook",
   });
-  input.addEventListener("blur", () => void done(true));
+  if (!title) return;
+  const data = await op("notebook.create", { title }, "New notebook");
+  const created = commandResult(data);
+  if (applyState(data) && created?.id) filter = { kind: "book", id: created.id };
+  render();
+  setStatus(`Notebook “${title}” created`);
 }
 
-async function deleteNotebook(id) {
-  const book = state.notebooks.find((entry) => entry.id === id);
-  const count = book?.noteCount ?? 0;
-  const message = count === 0
-    ? `Delete notebook "${book?.title}"?`
-    : `Delete notebook "${book?.title}"? Its ${count} note${count === 1 ? "" : "s"} move to Unfiled.`;
-  if (!confirm(message)) return;
-  const data = await op("notebook.delete", { id }, "Delete notebook");
-  if (notebookFilter === id) notebookFilter = null;
+function selectedNotebook() {
+  return filter.kind === "book" && filter.id ? state.notebooks.find((book) => book.id === filter.id) ?? null : null;
+}
+
+async function renameNotebook() {
+  const book = selectedNotebook();
+  if (!book) return;
+  const title = await window.NucleusShell.ask({
+    title: "Rename notebook",
+    value: book.title,
+    confirmLabel: "Rename",
+  });
+  if (!title || title === book.title) return;
+  const data = await op("notebook.rename", { id: book.id, title }, "Rename notebook");
+  applyState(data);
+  setStatus("Notebook renamed");
+}
+
+async function deleteNotebook() {
+  const book = selectedNotebook();
+  if (!book) return;
+  const count = book.noteCount ?? 0;
+  const accepted = await window.NucleusShell.confirm({
+    title: "Delete notebook",
+    body: count === 0
+      ? `Delete “${book.title}”?`
+      : `Delete “${book.title}”? Its ${plural(count, "note")} move to Unfiled — nothing is deleted.`,
+    confirmLabel: "Delete notebook",
+  });
+  if (!accepted) return;
+  const data = await op("notebook.delete", { id: book.id }, "Delete notebook");
+  filter = { kind: "all" };
   applyState(data);
   setStatus("Notebook deleted — notes kept");
 }
 
+// --- files ------------------------------------------------------------------
+
+function download(text, name, type) {
+  const blob = new Blob([text], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function slug(text) {
+  return String(text || "note")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "note";
+}
+
+async function exportNote() {
+  const note = currentNote();
+  if (!note) return;
+  await flushSave().catch(() => {});
+  download(`# ${note.title || "Untitled"}\n\n${editor.value}\n`, `${slug(note.title)}.md`, "text/markdown");
+  setStatus("Note exported as Markdown");
+}
+
+function exportAll() {
+  window.location.href = "/api/export";
+  setStatus("Exporting every note…");
+}
+
+function saveCopy() {
+  window.location.href = "/api/project";
+  setStatus("Saving a copy of the project…");
+}
+
+function openCopy() {
+  projectInput.click();
+}
+
 // --- selection --------------------------------------------------------------
 
-function toggleSelection(id, mode, index) {
-  if (mode === "range" && lastClicked !== null) {
-    const notes = visibleNotes();
-    const [from, to] = [lastClicked, index].sort((a, b) => a - b);
-    for (let i = from; i <= to; i++) {
-      const entry = notes[i];
-      if (entry) selection.add(entry.id);
-    }
-  } else if (mode === "toggle") {
-    if (selection.has(id)) selection.delete(id);
-    else selection.add(id);
-  } else {
-    selection.clear();
-  }
+function toggleSelection(id, index) {
+  if (selection.has(id)) selection.delete(id);
+  else selection.add(id);
   lastClicked = index;
-  renderNoteList();
-  renderBulkBar();
+  render();
 }
 
-async function bulkApply(kind) {
-  const ids = [...selection];
-  if (ids.length === 0) return;
-  if (kind === "move") {
-    bulkMoveMode = true;
-    setStatus("Pick a notebook in the list (Esc cancels)", 0);
+function selectRange(index) {
+  const notes = visibleNotes();
+  const from = lastClicked ?? index;
+  const [start, end] = from <= index ? [from, index] : [index, from];
+  for (let i = start; i <= end; i++) {
+    const note = notes[i];
+    if (note) selection.add(note.id);
+  }
+  render();
+}
+
+function onRowClick(event) {
+  const row = event.target.closest("[data-id]");
+  if (!row) return;
+  const id = row.dataset.id;
+  const index = Number(row.dataset.index);
+  if (event.ctrlKey || event.metaKey) {
+    toggleSelection(id, index);
     return;
   }
-  const command = scope === "trash" ? "note.restore" : "note.trash";
-  let last = null;
-  for (const id of ids) {
-    last = await op(command, { id }, scope === "trash" ? "Restore notes" : "Trash notes");
+  if (event.shiftKey) {
+    selectRange(index);
+    return;
   }
-  selection.clear();
-  if (last) applyState(last);
-  setStatus(scope === "trash" ? "Restored" : "Moved to trash — Ctrl+Z to undo once per note");
+  if (selection.size > 0) {
+    selection.clear();
+    lastClicked = null;
+  }
+  void openNote(id);
 }
 
-async function bulkMoveTo(bookId) {
+async function bulkApply() {
   const ids = [...selection];
+  if (ids.length === 0) return;
+  const command = filter.kind === "trash" ? "note.restore" : "note.trash";
+  let last = null;
   for (const id of ids) {
-    await op("note.move", { id, notebookId: bookId }, "Move notes");
+    last = await op(command, { id }, filter.kind === "trash" ? "Restore notes" : "Trash notes");
   }
   selection.clear();
-  bulkMoveMode = false;
-  await refresh();
-  setStatus(`Moved ${ids.length} note${ids.length === 1 ? "" : "s"}`);
+  lastClicked = null;
+  if (last) applyState(last);
+  else await refresh();
+  setStatus(filter.kind === "trash" ? "Restored" : "Moved to trash — Ctrl Z undoes it once per note");
+}
+
+// --- layout -----------------------------------------------------------------
+
+function setViewMode(mode, persist = true) {
+  if (!MODES.includes(mode)) return;
+  if (mode !== "edit") {
+    clearTimeout(saveTimer);
+    void flushSave().catch(() => {});
+  }
+  viewMode = mode;
+  if (persist) void window.NucleusShell.setSetting("viewMode", mode);
+  renderMode();
+  sync();
+}
+
+function cycleViewMode() {
+  setViewMode(MODES[(MODES.indexOf(viewMode) + 1) % MODES.length]);
+}
+
+function setSort(mode) {
+  sortMode = mode;
+  render();
+}
+
+function clearContext() {
+  if (detailsOpen) {
+    detailsOpen = false;
+    renderDetails(currentNote());
+    sync();
+    return;
+  }
+  if (selection.size > 0) {
+    selection.clear();
+    lastClicked = null;
+    render();
+    return;
+  }
+  if (query !== "") {
+    searchInput.value = "";
+    query = "";
+    searchClear.hidden = true;
+    renderListOnly();
+    sync({ panels: false });
+  }
 }
 
 // --- quick open -------------------------------------------------------------
@@ -957,8 +1162,8 @@ async function pickQuick(index) {
   const note = quickResults[index];
   if (!note) return;
   closeQuick();
-  if (note.trashedAt) scope = "trash";
-  else if (scope === "trash") scope = "all";
+  if (note.trashedAt) filter = { kind: "trash" };
+  else if (filter.kind === "trash") filter = { kind: "all" };
   await openNote(note.id);
 }
 
@@ -1005,180 +1210,43 @@ function insertMarkdown(kind) {
 // Events
 // ---------------------------------------------------------------------------
 
-$("#new-note").addEventListener("click", () => void createNote());
-$("#new-notebook").addEventListener("click", () => inlineBookInput("create"));
-$("#new-notebook-2").addEventListener("click", () => inlineBookInput("create"));
-
 searchInput.addEventListener("input", () => {
   query = searchInput.value.trim();
   searchClear.hidden = query === "";
-  renderNoteList();
+  renderListOnly();
 });
 
 searchClear.addEventListener("click", () => {
   searchInput.value = "";
   query = "";
   searchClear.hidden = true;
-  renderNoteList();
+  renderListOnly();
   searchInput.focus();
 });
 
-sortSelect.addEventListener("change", () => {
-  sortMode = sortSelect.value;
-  renderNoteList();
+titleInput.addEventListener("input", () => {
+  scheduleSave();
+  sync({ panels: false });
 });
-
-scopeSeg.addEventListener("click", (event) => {
-  const button = event.target.closest("button[data-scope]");
-  if (!button) return;
-  scope = button.dataset.scope;
-  selection.clear();
-  render();
-  if (activeId && !visibleNotes().some((note) => note.id === activeId)) activeId = null;
-});
-
-bookList.addEventListener("click", async (event) => {
-  const rename = event.target.closest("[data-book-rename]");
-  if (rename) {
-    event.stopPropagation();
-    inlineBookInput("rename", rename.dataset.bookRename);
-    return;
-  }
-  const remove = event.target.closest("[data-book-delete]");
-  if (remove) {
-    event.stopPropagation();
-    await deleteNotebook(remove.dataset.bookDelete);
-    return;
-  }
-  const book = event.target.closest("[data-book]");
-  if (!book) return;
-  const id = book.dataset.book;
-  if (bulkMoveMode) {
-    await bulkMoveTo(id === "unfiled" ? null : id);
-    return;
-  }
-  notebookFilter = notebookFilter === id ? null : id;
-  render();
-});
-
-bookList.addEventListener("dblclick", (event) => {
-  const book = event.target.closest("[data-book]");
-  if (!book || book.dataset.book === "unfiled") return;
-  inlineBookInput("rename", book.dataset.book);
-});
-
-// Drag a note onto a notebook.
-noteList.addEventListener("dragstart", (event) => {
-  const row = event.target.closest("[data-id]");
-  if (!row) return;
-  event.dataTransfer.setData("text/plain", row.dataset.id);
-  event.dataTransfer.effectAllowed = "move";
-});
-
-for (const target of [bookList]) {
-  target.addEventListener("dragover", (event) => {
-    const book = event.target.closest("[data-book]");
-    if (!book) return;
-    event.preventDefault();
-    for (const other of bookList.querySelectorAll(".is-drop")) other.classList.remove("is-drop");
-    book.classList.add("is-drop");
-  });
-  target.addEventListener("dragleave", () => {
-    for (const other of bookList.querySelectorAll(".is-drop")) other.classList.remove("is-drop");
-  });
-  target.addEventListener("drop", async (event) => {
-    const book = event.target.closest("[data-book]");
-    if (!book) return;
-    event.preventDefault();
-    const id = event.dataTransfer.getData("text/plain");
-    for (const other of bookList.querySelectorAll(".is-drop")) other.classList.remove("is-drop");
-    if (!id) return;
-    const data = await op("note.move", { id, notebookId: book.dataset.book === "unfiled" ? null : book.dataset.book }, "Move note");
-    applyState(data);
-    setStatus(`Moved to ${book.dataset.book === "unfiled" ? "Unfiled" : notebookName(book.dataset.book)}`);
-  });
-}
-
-tagList.addEventListener("click", (event) => {
-  const chip = event.target.closest("[data-tag]");
-  if (!chip) return;
-  tagFilter = tagFilter === chip.dataset.tag ? null : chip.dataset.tag;
-  render();
-});
-
-clearTagBtn.addEventListener("click", () => {
-  tagFilter = null;
-  render();
-});
-
-noteList.addEventListener("click", (event) => {
-  const row = event.target.closest("[data-id]");
-  if (!row) return;
-  const id = row.dataset.id;
-  const index = visibleNotes().findIndex((note) => note.id === id);
-  if (event.ctrlKey || event.metaKey) {
-    toggleSelection(id, "toggle", index);
-    return;
-  }
-  if (event.shiftKey) {
-    toggleSelection(id, "range", index);
-    return;
-  }
-  if (selection.size > 0) {
-    selection.clear();
-    renderNoteList();
-    renderBulkBar();
-  }
-  void openNote(id);
-});
-
-bulkBar.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-bulk]");
-  if (!button) return;
-  void bulkApply(button.dataset.bulk);
-});
-
-$("#bulk-clear").addEventListener("click", () => {
-  selection.clear();
-  bulkMoveMode = false;
-  render();
-});
-
-titleInput.addEventListener("input", scheduleSave);
 
 editor.addEventListener("input", () => {
   scheduleSave();
   if (viewMode === "split") renderPreview();
-  const note = currentNote();
-  if (note) renderCounts(note);
+  sync({ panels: false });
 });
 
-for (const button of document.querySelectorAll("#view-seg button")) {
-  button.addEventListener("click", () => setViewMode(button.dataset.mode));
-}
-
-function setViewMode(mode) {
-  if (!["write", "split", "read"].includes(mode)) return;
-  if (mode !== "write") {
-    clearTimeout(saveTimer);
-    void flushSave().catch(() => {});
-  }
-  viewMode = mode;
-  renderViewMode();
-}
-
-for (const button of document.querySelectorAll("#n-mod button")) {
-  button.addEventListener("click", () => insertMarkdown(button.dataset.md));
-}
-
-pinBtn.addEventListener("click", () => {
-  const note = currentNote();
-  if (note) void setFlags({ pinned: !note.pinned });
+detailsToggle.addEventListener("click", () => {
+  detailsOpen = !detailsOpen;
+  renderDetails(currentNote());
+  sync({ panels: false });
 });
 
-favBtn.addEventListener("click", () => {
-  const note = currentNote();
-  if (note) void setFlags({ favorite: !note.favorite });
+document.addEventListener("mousedown", (event) => {
+  if (!detailsOpen) return;
+  if (detailsEl.contains(event.target) || detailsToggle.contains(event.target)) return;
+  detailsOpen = false;
+  renderDetails(currentNote());
+  sync({ panels: false });
 });
 
 noteBookSelect.addEventListener("change", () => void setNotebook(noteBookSelect.value));
@@ -1197,27 +1265,24 @@ tagInput.addEventListener("blur", () => {
   if (tagInput.value.trim() !== "") void addTag(tagInput.value);
 });
 
-noteTagsEl.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-tagremove]");
-  if (button) void removeTag(button.dataset.tagRemove);
+projectInput.addEventListener("change", async () => {
+  const file = projectInput.files[0];
+  if (!file) return;
+  const text = await file.text();
+  const data = await apiFetch("/api/project", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: text,
+  });
+  activeId = null;
+  selection.clear();
+  filter = { kind: "all" };
+  titleInput.value = "";
+  editor.value = "";
+  applyState(data);
+  setStatus("Copy opened");
+  projectInput.value = "";
 });
-
-inspectorEl.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-act]");
-  if (!button) return;
-  switch (button.dataset.act) {
-    case "duplicate": void duplicateNote(); break;
-    case "trash": void trashNote(); break;
-    case "restore": void restoreNote(); break;
-    case "purge": void purgeNote(); break;
-    default: break;
-  }
-});
-
-undoBtn.addEventListener("click", () => void undo());
-redoBtn.addEventListener("click", () => void redo());
-$("#palette").addEventListener("click", () => window.NucleusKit?.openPalette());
-$("#quick-open").addEventListener("click", openQuick);
 
 quickInput.addEventListener("input", () => {
   quickIndex = 0;
@@ -1250,80 +1315,245 @@ quickListEl.addEventListener("click", (event) => {
   void pickQuick(index);
 });
 
-exportBtn.addEventListener("click", () => {
-  window.location.href = "/api/export";
-  setStatus("Exporting…");
-});
+// ---------------------------------------------------------------------------
+// The shell
+// ---------------------------------------------------------------------------
 
-saveProjectBtn.addEventListener("click", () => {
-  window.location.href = "/api/project";
-  setStatus("Saving project…");
-});
+emptyHost.appendChild(
+  window.NucleusShell.emptyState({
+    title: "Your thoughts, written.",
+    body: "Notebooks, tags and a rewindable history. Autosave keeps every keystroke; Ctrl Z takes it back.",
+    cta: "New note",
+    onCta: () => void createNote(),
+    hint: "Everything stays on this machine · Ctrl K lists every command",
+  }),
+);
 
-projectInput.addEventListener("change", async () => {
-  const file = projectInput.files[0];
-  if (!file) return;
-  const text = await file.text();
-  const data = await apiFetch("/api/project", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: text,
-  });
-  activeId = null;
-  selection.clear();
-  titleInput.value = "";
-  editor.value = "";
-  applyState(data);
-  setStatus("Project loaded");
-  projectInput.value = "";
-});
-
-// Keyboard shortcuts
-document.addEventListener("keydown", (event) => {
-  const mod = event.ctrlKey || event.metaKey;
-  const key = event.key.toLowerCase();
-  const typing = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement;
-
-  if (!quickOverlay.hidden && event.key === "Escape") {
-    event.preventDefault();
-    closeQuick();
-    return;
+function modeSeg() {
+  const seg = document.createElement("div");
+  seg.className = "c-seg";
+  seg.setAttribute("role", "group");
+  seg.setAttribute("aria-label", "Layout");
+  for (const [mode, label] of [["edit", "Edit"], ["split", "Split"], ["preview", "Preview"]]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.mode = mode;
+    button.textContent = label;
+    button.setAttribute("aria-pressed", String(viewMode === mode));
+    button.addEventListener("click", () => setViewMode(mode));
+    seg.appendChild(button);
   }
-  if (mod && key === "p") { event.preventDefault(); openQuick(); }
-  else if (mod && key === "n" && event.shiftKey) { event.preventDefault(); inlineBookInput("create"); }
-  else if (mod && key === "n") { event.preventDefault(); void createNote(); }
-  else if (mod && key === "d") { event.preventDefault(); void duplicateNote(); }
-  else if (mod && key === "z" && !event.shiftKey) { event.preventDefault(); void undo(); }
-  else if (mod && ((key === "z" && event.shiftKey) || key === "y")) { event.preventDefault(); void redo(); }
-  else if (mod && key === "e") { event.preventDefault(); cycleViewMode(); }
-  else if (mod && key === "s") { event.preventDefault(); setStatus("Saving…", 0); void flushSave(); }
-  else if (mod && key === "b" && event.target === editor) { event.preventDefault(); insertMarkdown("bold"); }
-  else if (mod && key === "i" && event.target === editor) { event.preventDefault(); insertMarkdown("italic"); }
-  else if (mod && key === "1") { event.preventDefault(); scope = "all"; selection.clear(); render(); }
-  else if (mod && key === "2") { event.preventDefault(); scope = "favorites"; selection.clear(); render(); }
-  else if (mod && key === "3") { event.preventDefault(); scope = "trash"; selection.clear(); render(); }
-  else if (event.key === "Escape") {
-    if (bulkMoveMode) {
-      bulkMoveMode = false;
-      setStatus("Bulk move cancelled");
-    } else if (selection.size > 0) {
-      selection.clear();
-      render();
-    } else if (query !== "") {
-      searchInput.value = "";
-      query = "";
-      searchClear.hidden = true;
-      renderNoteList();
-    } else if (!typing) {
-      searchInput.focus();
-    }
-  }
-});
-
-function cycleViewMode() {
-  const order = ["write", "split", "read"];
-  setViewMode(order[(order.indexOf(viewMode) + 1) % order.length]);
+  return seg;
 }
+
+const FORMAT_ITEMS = [
+  { id: "format.bold", label: "Bold", shortcut: "Ctrl+B", run: () => insertMarkdown("bold") },
+  { id: "format.italic", label: "Italic", shortcut: "Ctrl+I", run: () => insertMarkdown("italic") },
+  { sep: true },
+  { id: "format.h1", label: "Heading 1", run: () => insertMarkdown("h1") },
+  { id: "format.h2", label: "Heading 2", run: () => insertMarkdown("h2") },
+  { id: "format.h3", label: "Heading 3", run: () => insertMarkdown("h3") },
+  { sep: true },
+  { id: "format.list", label: "Bulleted list", run: () => insertMarkdown("ul") },
+  { id: "format.numbered", label: "Numbered list", run: () => insertMarkdown("ol") },
+  { id: "format.task", label: "Task list", run: () => insertMarkdown("task") },
+  { id: "format.quote", label: "Quote", run: () => insertMarkdown("quote") },
+  { id: "format.link", label: "Link…", run: () => insertMarkdown("link") },
+  { sep: true },
+  { id: "format.code", label: "Inline code", run: () => insertMarkdown("code") },
+  { id: "format.snippet", label: "Code block", run: () => insertMarkdown("snippet") },
+  { id: "format.table", label: "Table", run: () => insertMarkdown("table") },
+  { id: "format.rule", label: "Divider", run: () => insertMarkdown("rule") },
+];
+
+window.NucleusShell.mount({
+  app: { name: "Notes", accent: "#8ab4f8" },
+  main: workspace,
+  // Notes wants the proposal card above the title, not in a side column.
+  reviewHost: "#review-slot",
+  menus: [
+    {
+      label: "File",
+      items: [
+        { id: "file.newNote", label: "New note", shortcut: "Ctrl+N", run: () => void createNote() },
+        { id: "file.newNotebook", label: "New notebook…", shortcut: "Ctrl+Shift+N", run: () => void createNotebook() },
+        { sep: true },
+        { id: "file.renameNotebook", label: "Rename notebook…", run: () => void renameNotebook() },
+        { id: "file.deleteNotebook", label: "Delete notebook…", danger: true, run: () => void deleteNotebook() },
+        { sep: true },
+        { id: "file.saveCopy", label: "Save a copy…", shortcut: "Ctrl+S", run: saveCopy },
+        { id: "file.openCopy", label: "Open a copy…", run: openCopy },
+        { sep: true },
+        { id: "file.exportNote", label: "Export note…", run: () => void exportNote() },
+        { id: "file.exportAll", label: "Export all as Markdown…", run: exportAll },
+      ],
+    },
+    {
+      label: "Edit",
+      items: [
+        { id: "edit.undo", label: "Undo", shortcut: "Ctrl+Z", command: "tape.undo", run: () => void undo() },
+        { id: "edit.redo", label: "Redo", shortcut: ["Ctrl+Shift+Z", "Ctrl+Y"], command: "tape.redo", run: () => void redo() },
+        { sep: true },
+        { id: "edit.quickOpen", label: "Quick open…", shortcut: "Ctrl+P", run: openQuick },
+        { id: "edit.duplicate", label: "Duplicate note", shortcut: "Ctrl+D", run: () => void duplicateNote() },
+        { sep: true },
+        { id: "edit.pin", label: "Pin note", checked: () => Boolean(currentNote()?.pinned), run: () => void setFlags({ pinned: !currentNote()?.pinned }) },
+        { id: "edit.favorite", label: "Favorite note", checked: () => Boolean(currentNote()?.favorite), run: () => void setFlags({ favorite: !currentNote()?.favorite }) },
+        { sep: true },
+        { id: "edit.trash", label: "Move to trash", shortcut: "Del", run: () => void trashNote() },
+        { id: "edit.restore", label: "Restore note", run: () => void restoreNote() },
+        {
+          id: "edit.purge",
+          label: "Delete forever…",
+          danger: true,
+          confirm: "Delete this note forever? Undo still works until the app closes, but the note is gone from the library.",
+          run: () => void purgeNote(),
+        },
+        { sep: true },
+        { id: "edit.clear", label: "Clear selection or search", shortcut: "Esc", run: clearContext },
+      ],
+    },
+    { label: "Format", items: FORMAT_ITEMS },
+    {
+      label: "View",
+      items: [
+        { id: "view.edit", label: "Edit", shortcut: "Ctrl+1", checked: () => viewMode === "edit", run: () => setViewMode("edit") },
+        { id: "view.split", label: "Split", shortcut: "Ctrl+2", checked: () => viewMode === "split", run: () => setViewMode("split") },
+        { id: "view.preview", label: "Preview", shortcut: "Ctrl+3", checked: () => viewMode === "preview", run: () => setViewMode("preview") },
+        { sep: true },
+        { id: "view.cycle", label: "Next layout", shortcut: "Ctrl+E", run: cycleViewMode },
+        { sep: true },
+        { id: "view.sortUpdated", label: "Sort by updated", checked: () => sortMode === "updated", run: () => setSort("updated") },
+        { id: "view.sortCreated", label: "Sort by created", checked: () => sortMode === "created", run: () => setSort("created") },
+        { id: "view.sortTitle", label: "Sort by title", checked: () => sortMode === "title", run: () => setSort("title") },
+        { sep: true },
+        ...window.NucleusShell.standardViewMenu(),
+      ],
+    },
+    { label: "Help", items: window.NucleusShell.standardHelpMenu() },
+  ],
+  primary: { id: "file.newNote" },
+  noun: (ids) => plural(ids.length, "note"),
+  options: (ctx) => {
+    const note = currentNote();
+    if (!note) return { left: searchField, hint: "Ctrl N starts a note." };
+
+    const ids = [];
+    // Formatting rides in the options bar while there is room for it; below
+    // ~1200 px the Format menu keeps every action, the bar stays readable.
+    if (!note.trashedAt && ctx.mode !== "preview" && window.innerWidth >= 1200) {
+      ids.push("format.bold", "format.italic", "format.h1", "format.list", "format.task", "format.quote", "format.link");
+    }
+    ids.push("view.history");
+
+    return {
+      left: searchField,
+      label: ctx.mode === "preview" ? `${notebookName(note.notebookId)} / ${note.title || "Untitled"}` : "",
+      hint: note.trashedAt ? "Read-only — this note is in the trash." : savedLabel(note),
+      ids,
+      right: modeSeg(),
+    };
+  },
+  rail: [
+    { id: "notes", icon: "note", label: "Notes" },
+    { id: "history", icon: "history", label: "History" },
+  ],
+  panels: { left: notesPanel },
+  status: {
+    left: () => {
+      const node = document.createElement("span");
+      node.className = "n-status";
+      const dot = document.createElement("span");
+      dot.className = "c-dot";
+      if (status.kind === "busy") dot.classList.add("c-dot--busy");
+      if (status.kind === "error") dot.classList.add("c-dot--err");
+      node.append(dot, document.createTextNode(status.text));
+      return node;
+    },
+    right: () => {
+      const note = currentNote();
+      if (!note) {
+        const stats = state.stats ?? EMPTY_STATS;
+        return `${plural(stats.notes, "note")} · ${plural(stats.notebooks, "notebook")} · ${stats.trashed} in trash`;
+      }
+      const words = countWords(editor.value);
+      const reading = words === 0 ? 0 : Math.max(1, Math.round(words / 200));
+      const parts = [plural(words, "word"), `${editor.value.length} chars`, `${reading} min read`];
+      parts.push(notebookName(note.notebookId));
+      if (note.trashedAt) parts.push("read-only");
+      return parts.join(" · ");
+    },
+  },
+  enabled: {
+    "file.renameNotebook": () => Boolean(selectedNotebook()),
+    "file.deleteNotebook": () => Boolean(selectedNotebook()),
+    "file.saveCopy": () => state.stats.notes > 0,
+    "file.exportNote": () => Boolean(currentNote()),
+    "file.exportAll": () => state.stats.notes > 0,
+    "edit.undo": () => Boolean(state.canUndo) && !saving,
+    "edit.redo": () => Boolean(state.canRedo) && !saving,
+    "edit.quickOpen": () => liveNotes().length > 0,
+    "edit.duplicate": () => Boolean(currentNote()) && !currentNote().trashedAt,
+    "edit.pin": () => Boolean(currentNote()) && !currentNote().trashedAt,
+    "edit.favorite": () => Boolean(currentNote()) && !currentNote().trashedAt,
+    "edit.trash": () => Boolean(currentNote()) && !currentNote().trashedAt,
+    "edit.restore": () => Boolean(currentNote()?.trashedAt),
+    "edit.purge": () => Boolean(currentNote()?.trashedAt),
+    "edit.clear": () => selection.size > 0 || detailsOpen || query !== "",
+    "format.bold": () => editable(),
+    "format.italic": () => editable(),
+    "format.h1": () => editable(),
+    "format.h2": () => editable(),
+    "format.h3": () => editable(),
+    "format.list": () => editable(),
+    "format.numbered": () => editable(),
+    "format.task": () => editable(),
+    "format.quote": () => editable(),
+    "format.link": () => editable(),
+    "format.code": () => editable(),
+    "format.snippet": () => editable(),
+    "format.table": () => editable(),
+    "format.rule": () => editable(),
+  },
+  highlight: (ids, kind) => {
+    if (!listNode) return;
+    for (const row of listNode.querySelectorAll("[data-id]")) {
+      const touched = ids.includes(row.dataset.id);
+      row.classList.toggle("is-touched", touched);
+      row.classList.toggle("is-added", touched && kind === "added");
+    }
+  },
+});
+
+function editable() {
+  const note = currentNote();
+  return Boolean(note) && !note.trashedAt && viewMode !== "preview";
+}
+
+// ---------------------------------------------------------------------------
+// Boot
+// ---------------------------------------------------------------------------
+
+void (async () => {
+  await refresh();
+
+  // The layout is a setting (server-side, never localStorage). The window size
+  // only decides the default for a fresh install.
+  try {
+    const json = await (await fetch("/api/settings")).json();
+    const saved = json?.settings?.viewMode;
+    if (MODES.includes(saved)) {
+      viewMode = saved;
+      renderMode();
+      sync({ panels: false });
+    }
+  } catch {
+    /* no settings endpoint: keep the default */
+  }
+
+  const first = visibleNotes()[0];
+  if (first) await openNote(first.id);
+})();
 
 // Live updates from other tabs / agents: the app-kit SSE hub broadcasts a
 // `state` frame after every command, wherever it came from.
@@ -1338,13 +1568,3 @@ if (typeof EventSource !== "undefined") {
     /* EventSource reconnects on its own */
   };
 }
-
-// ---------------------------------------------------------------------------
-// Boot
-// ---------------------------------------------------------------------------
-
-void (async () => {
-  await refresh();
-  const first = visibleNotes()[0];
-  if (first) await openNote(first.id);
-})();

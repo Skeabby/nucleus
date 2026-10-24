@@ -84,6 +84,7 @@
     settings: {},
     dialogResolve: null,
     kitWired: false,
+    resizeTimer: null,
   };
 
   /** Shortcuts the shell owns; an app declaring them is a bug. */
@@ -404,7 +405,15 @@
     // gets the full width for its canvas.
     state.els.left.hidden = !state.config.panels || !state.config.panels.left;
     state.els.right.hidden = !state.config.panels || !state.config.panels.right;
-    state.els.right.insertBefore(state.els.reviewHost, state.els.right.firstChild);
+    // The proposal card lives at the top of the right panel by default. Notes
+    // asks for it inline, above the title (brief #3 §4.2): `reviewHost` wins
+    // over the right panel when it points at a real element.
+    const inlineReview = resolveHost(state.config.reviewHost);
+    if (inlineReview && inlineReview !== document.body) {
+      inlineReview.appendChild(state.els.reviewHost);
+    } else {
+      state.els.right.insertBefore(state.els.reviewHost, state.els.right.firstChild);
+    }
 
     document.body.appendChild(state.els.menu);
     document.body.appendChild(state.els.context);
@@ -502,6 +511,10 @@
 
     window.addEventListener("resize", () => {
       if (state.openMenu !== -1) positionMenu(state.openMenu);
+      // The options bar is contextual by width (Notes hides its formatting
+      // row below 1200 px): re-read it, once the user stops dragging.
+      clearTimeout(state.resizeTimer);
+      state.resizeTimer = setTimeout(() => renderOptions(), 120);
     });
   }
 
@@ -791,6 +804,7 @@
     let hint = "";
     let label = "";
     let right = null;
+    let left = null;
     if (Array.isArray(result)) ids = result;
     else if (typeof result === "string") hint = result;
     else if (result && typeof result === "object") {
@@ -798,6 +812,7 @@
       hint = result.hint || "";
       label = result.label || "";
       right = result.right || null;
+      left = result.left || null;
     }
 
     const usable = [];
@@ -815,9 +830,12 @@
     }
     state.options = usable.map((item) => item.id);
 
-    bar.hidden = usable.length === 0 && !hint && !label && !right;
+    bar.hidden = usable.length === 0 && !hint && !label && !right && !left;
     state.els.root.style.setProperty("--nk-optionsbar-h", bar.hidden ? "0px" : "46px");
 
+    // A control that is not an action (Notes' search field) sits at the far
+    // left, before the label: the bar reads "where am I · what can I do".
+    if (left) bar.appendChild(left);
     if (label) {
       const tag = el("span", "nk-optionsbar__label");
       tag.appendChild(document.createTextNode(label));
@@ -985,7 +1003,9 @@
       btn.type = "button";
       if (action.primary) btn.classList.add("c-btn--primary");
       if (action.danger) btn.classList.add("c-btn--danger-fill");
-      btn.addEventListener("click", () => resolveDialog(action.value));
+      btn.addEventListener("click", () =>
+        resolveDialog(typeof action.value === "function" ? action.value() : action.value),
+      );
       actions.appendChild(btn);
       nodes.push(btn);
     }
@@ -1026,6 +1046,43 @@
           },
         ],
       });
+    });
+  }
+
+  /**
+   * One field, one answer. The shell owns the dialog so an app never invents
+   * its own modal (Notes → New notebook / Rename notebook).
+   */
+  function askDialog(message, options) {
+    const config = typeof message === "object" && message !== null ? message : Object.assign({ body: message }, options || {});
+    return new Promise((resolve) => {
+      if (state.dialogResolve) state.dialogResolve(null);
+      state.dialogResolve = resolve;
+      const field = el("input", "nk-dialog__field");
+      field.type = "text";
+      field.value = config.value || "";
+      field.placeholder = config.placeholder || "";
+      field.spellcheck = false;
+      field.setAttribute("aria-label", config.title || "Value");
+      field.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        resolveDialog(field.value.trim());
+      });
+      const wrap = el("div");
+      if (config.body) wrap.appendChild(el("p", "nk-dialog__hint", config.body));
+      wrap.appendChild(field);
+      openDialog({
+        title: config.title || "New name",
+        content: wrap,
+        actions: [
+          { label: "Cancel", value: null },
+          // Read at click time: the user typed after the dialog opened.
+          { label: config.confirmLabel || "Save", value: () => field.value.trim(), primary: true },
+        ],
+      });
+      field.focus();
+      field.select();
     });
   }
 
@@ -1264,8 +1321,10 @@
       if (state.mounted) selectPanel(id);
     },
     confirm: (message, options) => confirmDialog(message, options),
+    ask: (message, options) => askDialog(message, options),
     setDeveloperDetails,
     setTheme,
+    setSetting: (key, value) => setSetting(key, value),
     icon,
     emptyState,
     standardViewMenu,

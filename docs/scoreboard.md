@@ -15,7 +15,7 @@ hand: that is the difference between a claim and a measurement.
 | Claim | Measured | Reproduce |
 |---|---|---|
 | Build, typecheck and test tasks pass | **42 / 42** | `npm run verify` |
-| TypeScript unit tests | **285** (app-kit 84 · control 14 · control-federation 10 · control-mcp 27 · core 68 · image 19 · launcher 16 · notes 25 · pdf 22) | `npm run test` |
+| TypeScript unit tests | **289** (app-kit 88 · control 14 · control-federation 10 · control-mcp 27 · core 68 · image 19 · launcher 16 · notes 25 · pdf 22) | `npm run test` |
 | UI guards: plain vocabulary, WCAG AA contrast, accent = launcher category | **13 tests** | `npx vitest run --root packages/app-kit test/jargon.test.ts test/contrast.test.ts test/accent.test.ts` |
 | Apps joined into one session → unified commands | **33 commands from 2 apps** (nucleus.pdf (pdf) · nucleus.notes (notes)) | `npm run demo:cross-app` |
 | One undo path across those apps: 4 edits in 2 apps, unwound then replayed | **9 / 9 checks passed** | `npm run demo:cross-app` |

@@ -360,6 +360,42 @@
 > files) reports 4 menus, 5 contextual actions on selection, the rail, the History text, a filtered
 > board (2 of 8), a rotate → `90°` → `Ctrl+Z` → `0°` round-trip, **zero console logs, zero
 > exceptions**. Notes and Image Editor keep the old frame until U3/U4.
+>
+> **Update #20 (2026-10-24) — UI pass, part 3 (U3): Notes moves onto the shell, and the library
+> becomes one dropdown.** The second app, and the one with the most furniture: `public/index.html`
+> goes **208 → 70 lines** (`<button>`: **37 → 1**) and `style.css` **453 → 378**, while `app.js`
+> stays in the same range (**1350 → 1570**) because the app now *declares* five menus and its panel
+> instead of painting a toolbar by hand — every removed control is code the app no longer owns. The
+> notebook rail, the 15-button Markdown toolbar, the sort select, the scope segment and the whole
+> right-hand inspector are gone: the **filter is one dropdown** above the list (All notes ·
+> Favorites · Trash · each notebook · each tag) and the list is a plain `c-row` list with
+> multi-select (Ctrl/Shift) and a bulk bar that appears only when something is selected. The frame
+> is File (New note `Ctrl+N`, New notebook…, Rename notebook…, Delete notebook…, Save a copy…
+> `Ctrl+S`, Open a copy…, Export note…, Export all as Markdown…) · Edit (Undo/Redo, Quick open…
+> `Ctrl+P`, Duplicate `Ctrl+D`, Pin, Favorite, Move to trash `Del`, Restore, Delete forever… →
+> destructive and confirmed, Clear selection `Esc`) · Format (Bold `Ctrl+B`, Italic `Ctrl+I`, H1–H3,
+> lists, task, quote, link, inline code, code block, table, divider) · View (Edit/Split/Preview
+> `Ctrl+1..3`, Next layout `Ctrl+E`, sort by updated/created/title, then History `Ctrl+H` /
+> Developer details / Theme) · Help. The **options bar** carries the one control a search needs — a
+> filter that is not an action — plus the save state, the layout segment and History; its formatting
+> row appears only in Edit/Split and only above **1200 px** (below that the Format menu keeps every
+> action and the bar stays readable). Autosave speaks plainly — "Saved just now" / "Saving…" /
+> "Unsaved changes" — with created/updated/notebook/tags behind a **Details popover** in the editor
+> header, words · characters · reading time · notebook in the status bar, and a **640 px measure**
+> for both the editor and the preview. Shell changes this round, each earned by the brief: the
+> options bar accepts a **`left` node** (a control, never an action; Notes hands it the *same* DOM
+> node on every render, so the query and its caret survive), `reviewHost` **docks the proposal card
+> inline** above the title instead of in a right panel Notes no longer has, `ask()` gives apps the
+> shell's one-field dialog (New/Rename notebook) with values read at click time, the options bar
+> **re-reads itself on resize** (debounced), and `setSetting` was missing from the public export —
+> PDF's zoom had been throwing silently since U2. A test now pins the public API. Notes joins
+> `MIGRATED` in the jargon guard. Evidence: `npm run verify` PASS (**42/42** tasks, **289** TS tests,
+> app-kit **88**), `node tools/media.mjs --only notes` regenerated `docs/media/notes.png`, and a CDP
+> smoke on the real server (3 notes, 1 trashed) reports 5 menus, 8 contextual actions, the rail, a
+> search that filters 3 → 1 and keeps the caret, Preview hiding the textarea and showing the
+> breadcrumb, the Details popover with both tags, `Delete forever…` disabled outside the trash, and
+> the narrow window (1100 px) dropping to `History` alone with **no overflow** — zero console logs,
+> zero exceptions, zero server stderr.
 
 **Codename:** `nucleus` · monorepo root `nucleus` · packages `@nucleus/*`
 

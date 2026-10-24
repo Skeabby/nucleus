@@ -421,3 +421,79 @@ describe("@nucleus/app-kit shell — registry reuse", () => {
     expect(document.body.classList.contains("nk-dev")).toBe(true);
   });
 });
+
+describe("@nucleus/app-kit shell — hosting an app's own furniture", () => {
+  it("keeps a non-action control in the left slot, before the label", () => {
+    // The app owns the node and returns the same one every time: that is what
+    // lets a search field keep its value (and its listeners) across re-renders.
+    const field = document.createElement("div");
+    field.className = "nk-search";
+    field.id = "search-slot";
+    mountShell({}, {
+      options: () => ({ left: field, label: "Work / Plan", ids: ["edit.duplicate"] }),
+    });
+    const bar = document.querySelector(".nk-optionsbar") as HTMLElement;
+    expect(bar.firstElementChild?.id).toBe("search-slot");
+    expect(bar.querySelector(".nk-optionsbar__label")?.textContent).toBe("Work / Plan");
+    shell.setContext({ selection: ["page-1"] });
+    expect(bar.firstElementChild).toBe(field);
+    expect(bar.querySelectorAll(".c-btn").length).toBe(1);
+  });
+
+  it("docks the proposal card inline when the app asks for it", () => {
+    const slot = document.createElement("div");
+    slot.id = "review-slot";
+    document.body.appendChild(slot);
+    mountShell({}, {
+      reviewHost: "#review-slot",
+      panels: {
+        left: () => {
+          const node = document.createElement("div");
+          node.textContent = "notes";
+          return node;
+        },
+      },
+    });
+    expect(slot.querySelector(".nk-review-host")).not.toBeNull();
+    // No right panel was declared: nothing is parked in a hidden column.
+    const right = document.querySelector(".nk-panel--right") as HTMLElement;
+    expect(right.querySelector(".nk-review-host")).toBeNull();
+    expect(right.hidden).toBe(true);
+  });
+});
+
+describe("@nucleus/app-kit shell — public API", () => {
+  it("exposes the helpers every app calls (settings, dialogs, presets)", () => {
+    mountShell();
+    const api = (globalThis as unknown as { NucleusShell: Record<string, unknown> }).NucleusShell;
+    for (const name of [
+      "setSetting",
+      "setTheme",
+      "setDeveloperDetails",
+      "confirm",
+      "ask",
+      "emptyState",
+      "standardViewMenu",
+      "standardHelpMenu",
+      "openPanel",
+    ]) {
+      expect(typeof api[name], name).toBe("function");
+    }
+    // PDF's zoom and Notes' layout both persist through this one call.
+    expect(() => (api.setSetting as (key: string, value: unknown) => unknown)("viewMode", "split")).not.toThrow();
+  });
+
+  it("re-renders the options bar when the window is resized", () => {
+    vi.useFakeTimers();
+    Object.defineProperty(window, "innerWidth", { value: 1400, configurable: true });
+    mountShell({}, {
+      options: () => ({ ids: window.innerWidth >= 1200 ? ["edit.duplicate"] : [] }),
+    });
+    expect(document.querySelectorAll(".nk-optionsbar .c-btn").length).toBe(1);
+    Object.defineProperty(window, "innerWidth", { value: 900, configurable: true });
+    window.dispatchEvent(new Event("resize"));
+    vi.advanceTimersByTime(200);
+    expect(document.querySelectorAll(".nk-optionsbar .c-btn").length).toBe(0);
+    vi.useRealTimers();
+  });
+});

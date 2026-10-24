@@ -7,194 +7,55 @@
     <link rel="stylesheet" href="/_kit/kit.css" />
     <link rel="stylesheet" href="/_kit/craft.css" />
     <style>
+      /* App accent: the launcher's "text" category colour (#8AB4F8). */
       :root { --nk-app-accent: #8ab4f8; }
     </style>
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
-    <div class="c-app">
+    <!-- The editor column is adopted by NucleusShell (menus, options bar,
+         panels, status bar and shortcuts all live in /_kit/shell.js). -->
+    <div class="n-work" id="workspace">
+      <div id="empty"></div>
 
-      <!-- ── Toolstrip ─────────────────────────────────────────────── -->
-      <header class="c-strip">
-        <div class="c-brand">
-          <span class="c-brand__mark"></span>
-          <span class="c-brand__name">Notes</span>
-          <span class="c-brand__sub">nucleus</span>
+      <div class="n-depth" id="note-panel" hidden>
+        <header class="n-head">
+          <!-- The shell docks the proposal card here (brief #3 §4.2). -->
+          <div id="review-slot"></div>
+
+          <input class="n-title" id="title-input" type="text" placeholder="Note title" spellcheck="true" />
+          <div class="n-lines">
+            <button class="n-details__toggle" id="details-toggle" type="button" aria-expanded="false" aria-controls="details">
+              Details
+            </button>
+            <span class="n-lines__spring"></span>
+            <span class="n-updated" id="note-updated"></span>
+          </div>
+
+          <div class="n-details" id="details" hidden>
+            <div class="n-details__grid">
+              <span class="n-details__label">Created</span><span id="detail-created">—</span>
+              <span class="n-details__label">Updated</span><span id="detail-updated">—</span>
+              <span class="n-details__label">Notebook</span>
+              <select class="n-bookselect" id="note-book" aria-label="Notebook"></select>
+            </div>
+            <div class="n-tagline">
+              <div class="n-tagchips" id="note-tags"></div>
+              <input class="n-taginput" id="tag-input" type="text" placeholder="+ tag" autocomplete="off" spellcheck="false" aria-label="Add a tag" />
+            </div>
+          </div>
+        </header>
+
+        <div class="n-body" id="n-body" data-mode="edit">
+          <textarea class="n-editor" id="editor" placeholder="Write in Markdown…" spellcheck="true" aria-label="Note body"></textarea>
+          <div class="n-preview" id="preview"></div>
         </div>
-
-        <span class="c-tsep"></span>
-
-        <div class="c-tgroup">
-          <button class="c-btn" id="new-note" title="New note (Ctrl+N)">＋ Note</button>
-          <button class="c-btn" id="new-notebook" title="New notebook (Ctrl+Shift+N)">＋ Notebook</button>
-        </div>
-
-        <span class="c-tsep"></span>
-
-        <div class="c-tgroup">
-          <button class="c-btn c-btn--icon" id="undo" title="Undo (Ctrl+Z)" disabled>↶</button>
-          <button class="c-btn c-btn--icon" id="redo" title="Redo (Ctrl+Shift+Z)" disabled>↷</button>
-        </div>
-
-        <span class="c-tsep"></span>
-
-        <div class="c-seg" id="view-seg" title="Editor layout (Ctrl+E)">
-          <button data-mode="write" aria-pressed="true">Write</button>
-          <button data-mode="split" aria-pressed="false">Split</button>
-          <button data-mode="read" aria-pressed="false">Read</button>
-        </div>
-
-        <div class="c-strip__spring"></div>
-
-        <button class="c-btn" id="quick-open" title="Quick open a note (Ctrl+P)">⌕ Quick open</button>
-        <button class="c-btn" id="palette" title="Command palette (Ctrl+K)">⌘K</button>
-        <span class="c-tsep"></span>
-        <button class="c-btn" id="save-project" title="Download every note as a project">Save…</button>
-        <label class="c-btn" for="project-input" title="Open a saved project">Open…</label>
-        <input id="project-input" type="file" accept=".json,application/json" hidden />
-        <button class="c-btn c-btn--accent" id="export" title="Export every note as Markdown">Export</button>
-      </header>
-
-      <!-- ── Main: library · editor · inspector ────────────────────── -->
-      <div class="c-main">
-
-        <aside class="c-rail">
-          <div class="c-panelhead">
-            <span id="scope-title">All notes</span>
-            <span class="c-chip" id="note-count">0</span>
-          </div>
-
-          <div class="c-seg n-scope" id="scope-seg" title="Scope (Ctrl+1/2/3)">
-            <button data-scope="all" aria-pressed="true">All</button>
-            <button data-scope="favorites" aria-pressed="false">Favorites</button>
-            <button data-scope="trash" aria-pressed="false">Trash</button>
-          </div>
-
-          <div class="c-search">
-            <span class="c-search__glyph">⌕</span>
-            <input id="search" type="search" placeholder="Search notes…" autocomplete="off" spellcheck="false" />
-            <button class="n-clear" id="search-clear" title="Clear search" hidden>×</button>
-          </div>
-
-          <div class="c-rail__body">
-            <div class="n-section">
-              <span>Notebooks</span>
-              <span class="n-section__tools">
-                <button class="n-mini" id="new-notebook-2" title="New notebook">＋</button>
-              </span>
-            </div>
-            <div id="notebook-list" class="n-books"></div>
-
-            <div class="n-section" id="tags-section">
-              <span>Tags</span>
-              <button class="n-mini" id="clear-tag" title="Clear tag filter" hidden>×</button>
-            </div>
-            <div id="tag-list" class="n-tags"></div>
-
-            <div class="n-section">
-              <span>Notes</span>
-              <select id="sort" class="n-sort" title="Sort notes">
-                <option value="updated">updated</option>
-                <option value="created">created</option>
-                <option value="title">title</option>
-              </select>
-            </div>
-
-            <div id="note-list" role="listbox" aria-multiselectable="true"></div>
-          </div>
-
-          <div class="n-bulk" id="bulk-bar" hidden>
-            <span id="bulk-count">0 selected</span>
-            <button class="c-btn" data-bulk="move" title="Move to the notebook picked next">Move…</button>
-            <button class="c-btn" data-bulk="trash">Trash</button>
-            <button class="c-btn c-btn--icon" id="bulk-clear" title="Clear selection">×</button>
-          </div>
-
-          <div class="c-rail__foot">
-            <span id="rail-stats" class="n-foot-note">—</span>
-          </div>
-        </aside>
-
-        <main class="c-center" id="editor-panel">
-          <div class="c-empty" id="empty-state">
-            <div class="c-empty__kick">01 / notes</div>
-            <h1>Your thoughts, written.</h1>
-            <p>Create a note with <kbd>Ctrl</kbd>+<kbd>N</kbd>, jump to one with <kbd>Ctrl</kbd>+<kbd>P</kbd>, or press <kbd>Ctrl</kbd>+<kbd>K</kbd> and let an agent type for you.</p>
-            <p class="c-empty__hint">Markdown · notebooks · tags · trash · autosave · every edit rewindable.</p>
-          </div>
-
-          <div id="editor-depth" class="n-depth" hidden>
-            <div class="n-head">
-              <input class="n-title" id="title-input" type="text" placeholder="Note title" spellcheck="true" />
-              <div class="n-lines">
-                <button class="n-flag" id="pin-toggle" title="Pin to the top (Ctrl+Shift+P)" aria-pressed="false">PIN</button>
-                <button class="n-flag" id="fav-toggle" title="Mark as favorite" aria-pressed="false">FAVORITE</button>
-                <select class="n-bookselect" id="note-book" title="Notebook"></select>
-                <span class="n-lines__spring"></span>
-                <span class="n-updated" id="note-updated"></span>
-              </div>
-              <div class="n-tagline">
-                <div class="n-tagchips" id="note-tags"></div>
-                <input class="n-taginput" id="tag-input" type="text" placeholder="+ tag" autocomplete="off" spellcheck="false" />
-              </div>
-            </div>
-
-            <div class="n-mod" id="n-mod">
-              <button data-md="h1" title="Heading 1">H1</button>
-              <button data-md="h2" title="Heading 2">H2</button>
-              <button data-md="h3" title="Heading 3">H3</button>
-              <span class="n-mod__sep"></span>
-              <button data-md="bold" title="Bold (Ctrl+B)"><b>B</b></button>
-              <button data-md="italic" title="Italic (Ctrl+I)"><i>I</i></button>
-              <button data-md="strike" title="Strikethrough"><s>S</s></button>
-              <button data-md="code" title="Inline code">‹›</button>
-              <span class="n-mod__sep"></span>
-              <button data-md="ul" title="Bulleted list">• list</button>
-              <button data-md="ol" title="Numbered list">1. list</button>
-              <button data-md="task" title="Task list">☐ task</button>
-              <button data-md="quote" title="Quote">” quote</button>
-              <span class="n-mod__sep"></span>
-              <button data-md="link" title="Link">link</button>
-              <button data-md="snippet" title="Code block">snippet</button>
-              <button data-md="table" title="Table">table</button>
-              <button data-md="rule" title="Divider">—</button>
-              <span class="n-mod__spring"></span>
-              <span class="n-count" id="editor-count">0 words</span>
-            </div>
-
-            <div class="n-body" id="n-body" data-mode="write">
-              <textarea class="n-editor" id="editor" placeholder="Write in Markdown…" spellcheck="true"></textarea>
-              <div class="n-preview" id="preview"></div>
-            </div>
-
-            <div class="n-foot">
-              <span id="note-foot-left"></span>
-              <span class="n-foot__spring"></span>
-              <span id="note-foot-right"></span>
-            </div>
-          </div>
-        </main>
-
-        <aside class="c-inspector">
-          <div class="c-panelhead"><span>Inspector</span></div>
-          <div class="c-inspector__body" id="inspector"></div>
-          <div class="c-inspector__foot">
-            <span class="n-foot-note">history is rewindable</span>
-          </div>
-        </aside>
       </div>
-
-      <!-- ── Status bar ────────────────────────────────────────────── -->
-      <footer class="c-status">
-        <span class="c-dot" id="dot"></span>
-        <span id="status">Ready</span>
-        <span class="c-status__spring"></span>
-        <span id="meta"></span>
-        <span>⌘K commands · Ctrl+P quick open · Ctrl+E layout</span>
-      </footer>
     </div>
 
-    <!-- ── Quick open (Ctrl+P) ─────────────────────────────────────── -->
+    <input id="project-input" type="file" accept=".json,application/json" hidden />
+
+    <!-- Quick open (Ctrl+P) — stays outside the shell's frame. -->
     <div class="n-overlay" id="quick" hidden>
       <div class="n-quick" role="dialog" aria-label="Quick open">
         <input id="quick-input" type="text" placeholder="Jump to a note…" autocomplete="off" spellcheck="false" />
@@ -202,7 +63,8 @@
       </div>
     </div>
 
+    <script src="/_kit/kit.js"></script>
+    <script src="/_kit/shell.js"></script>
     <script type="module" src="/app.js"></script>
-    <script src="/_kit/kit.js" defer></script>
   </body>
 </html>

@@ -729,6 +729,9 @@ body:has(#nk-scrubber.nk-visible) .c-app {
 .nk-menubar__btn[aria-expanded="true"] { background: var(--c-panel); color: var(--c-text-strong); }
 
 .nk-menubar__palette {
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
   font-family: var(--c-mono);
   font-size: 11px;
   color: var(--c-muted);
@@ -838,6 +841,45 @@ body:has(#nk-scrubber.nk-visible) .c-app {
 .c-status__spring { flex: 1; }
 .nk-optionsbar .c-btn { min-height: 30px; }
 
+/* A filter field is not an action: apps put it in the bar's `left` slot. */
+.nk-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: none;
+  width: 196px;
+}
+.nk-search input {
+  width: 100%;
+  height: 30px;
+  padding: 0 24px 0 8px;
+  border: 1px solid var(--c-line);
+  background: var(--c-surface);
+  color: var(--c-text);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.nk-search input::placeholder { color: var(--c-faint); }
+.nk-search input:focus { border-color: var(--c-accent-ink); }
+.nk-search input::-webkit-search-cancel-button { display: none; }
+.nk-search__clear {
+  position: absolute;
+  right: 3px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  background: transparent;
+  color: var(--c-faint);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.nk-search__clear:hover { color: var(--c-text-strong); }
+.nk-search__clear[hidden] { display: none; }
+
 /* ── Body: icon rail · left panel · main · right panel ─────────────── */
 
 .nk-body {
@@ -924,6 +966,19 @@ body:has(#nk-scrubber.nk-visible) .c-app {
 .nk-dialog__title { margin: 0 0 6px; font-size: 14px; font-weight: 650; color: var(--c-text-strong); }
 .nk-dialog__body { margin: 0 0 16px; font-size: 12.5px; color: var(--c-muted); }
 .nk-dialog__actions { display: flex; justify-content: flex-end; gap: 8px; }
+.nk-dialog__hint { margin: 0 0 10px; font-size: 12px; color: var(--c-muted); }
+.nk-dialog__field {
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--c-line-strong);
+  background: var(--c-ink);
+  color: var(--c-text-strong);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.nk-dialog__field:focus { border-color: var(--c-accent-ink); }
 .nk-dialog__actions .c-btn { min-height: 32px; }
 .c-btn--danger-fill { background: var(--c-red); border-color: var(--c-red); color: #17141f; font-weight: 650; }
 .c-btn--danger-fill:hover { background: color-mix(in srgb, var(--c-red) 85%, #ffffff); border-color: var(--c-red); color: #17141f; }

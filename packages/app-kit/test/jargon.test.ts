@@ -15,7 +15,7 @@ const kit = new URL("../kit/", import.meta.url);
 const repo = new URL("../../../", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
 
 /** Add an app id here when its migration lands. */
-const MIGRATED: string[] = ["pdf-workbench"];
+const MIGRATED: string[] = ["pdf-workbench", "notes"];
 
 const VISIBLE_JARGON: { pattern: RegExp; replacement: string }[] = [
   { pattern: /\bbus command\b/i, replacement: "plain verbs (no architecture talk)" },
