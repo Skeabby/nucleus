@@ -31,6 +31,7 @@ function usage(message) {
       "  node tools/sign-catalog.mjs <catalog.json> [--key <pem>] [--key-env <VAR>] [--key-id <id>] [--out <sig>]",
       "  node tools/sign-catalog.mjs <catalog.json> --verify <public.pem|public.hex>",
       "  node tools/sign-catalog.mjs --generate [--key-id <id>] [--out-dir <dir>]",
+      "  node tools/sign-catalog.mjs --selftest",
     ].join("\n"),
   );
   process.exit(2);
@@ -45,7 +46,7 @@ function args(argv) {
       continue;
     }
     const name = token.slice(2);
-    if (["generate", "verify", "help"].includes(name)) {
+    if (["generate", "verify", "selftest", "help"].includes(name)) {
       out.flags[name] = true;
       continue;
     }
@@ -66,12 +67,12 @@ function rawPublicHex(publicKey) {
 
 function loadPrivate(flags) {
   const envName = flags["key-env"];
-  const source = envName ? process.env[envName] : flags.key;
-  if (!source) usage("no key: pass --key <path> or --key-env <VAR>");
   if (envName && !process.env[envName]) {
     console.error(`sign-catalog: environment variable ${envName} is empty`);
     process.exit(2);
   }
+  const source = envName ? process.env[envName] : flags.key;
+  if (!source) usage("no key: pass --key <path> or --key-env <VAR>");
   // A path is the common case; a PEM body is what a CI secret usually holds.
   const material = existsSync(source) ? readFileSync(source, "utf8") : source;
   if (!material.includes("-----BEGIN")) usage(`not a PEM private key: ${envName ? `$${envName}` : source}`);
@@ -141,9 +142,52 @@ function generate(flags) {
   return 0;
 }
 
+/**
+ * The same golden vector as `core/src/trust.rs`: a deterministic seed
+ * (`0x00..0x1f`), a fixed payload and the signature it must produce. Ed25519
+ * signing is deterministic, so a mismatch means the tool changed how it signs
+ * (or what it signs) — exactly the failure a release must never ship.
+ */
+const SELF_TEST = {
+  payload:
+    '{"suiteVersion":"9.9.9","issuedAt":"2026-10-24T00:00:00Z","expiresAt":"2027-01-22T00:00:00Z","apps":[]}',
+  publicHex: "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+  signature:
+    "dJlMfSHpXtNN5KSqNtyrTPy0JDczQsZqkoaKRm16mh1CuJyuWDqrjWkkqYgvNkNL+duHV3Y0dPfH7ALFOc2YAA==",
+};
+
+function selfTest() {
+  const seed = Buffer.from(Array.from({ length: 32 }, (_, index) => index));
+  // PKCS#8 wrapper for an Ed25519 private key: fixed prefix + the 32-byte seed.
+  const der = Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"), seed]);
+  const privateKey = createPrivateKey({ key: der, format: "der", type: "pkcs8" });
+  const bytes = Buffer.from(SELF_TEST.payload, "utf8");
+  const signature = sign(null, bytes, privateKey).toString("base64");
+  const publicHex = rawPublicHex(createPublicKey(privateKey));
+  const checks = [
+    ["public key matches the published test key", publicHex === SELF_TEST.publicHex],
+    ["signature matches the Rust golden vector", signature === SELF_TEST.signature],
+    [
+      "signature verifies against its own public key",
+      verify(null, bytes, createPublicKey(privateKey), Buffer.from(signature, "base64")),
+    ],
+  ];
+  let failed = 0;
+  for (const [label, ok] of checks) {
+    console.log(`${ok ? "ok  " : "FAIL"} ${label}`);
+    if (!ok) failed += 1;
+  }
+  if (signature !== SELF_TEST.signature) console.error(`  got ${signature}`);
+  return failed === 0 ? 0 : 1;
+}
+
 const parsed = args(process.argv.slice(2));
-if (parsed.flags.help) usage();
-if (parsed.flags.generate) process.exit(generate(parsed.flags));
-if (parsed.flags.verify) process.exit(verifyCatalog(parsed.flags));
-if (parsed.positional.length === 0) usage();
-process.exit(signCatalog(parsed.flags));
+// One option bag for every sub-command: `flags` for the named ones, plus the
+// positionals, so `signCatalog`/`verifyCatalog` can read either.
+const opts = { ...parsed.flags, positional: parsed.positional };
+if (opts.help) usage();
+if (opts.selftest) process.exit(selfTest());
+if (opts.generate) process.exit(generate(opts));
+if (opts.verify) process.exit(verifyCatalog(opts));
+if (opts.positional.length === 0) usage();
+process.exit(signCatalog(opts));

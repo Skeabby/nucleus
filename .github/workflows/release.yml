@@ -118,6 +118,10 @@ jobs:
           if (-not $env:NUCLEUS_CATALOG_KEY) {
             throw "NUCLEUS_CATALOG_KEY is empty: add the Ed25519 private key as a repository secret (see tools/sign-catalog.mjs --generate)."
           }
+          # Prove the signer still produces the verifier's golden vector before
+          # signing anything real.
+          node tools/sign-catalog.mjs --selftest
+          if ($LASTEXITCODE -ne 0) { throw "the catalogue signer no longer matches the golden vector" }
           $setup = Get-Item "dist\NucleusSetup-*win64.exe" | Select-Object -First 1
           if (-not $setup) { throw "no installer built" }
           launcher-rs\target\release\nucleus-launcher.exe `

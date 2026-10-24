@@ -18,3 +18,6 @@ jobs:
       - run: npm run verify
       # docs/scoreboard.md must match what the code actually measures.
       - run: npm run scoreboard -- --check ts
+      # The catalogue signer must still produce the Rust verifier's golden
+      # vector: a drifted signer would publish a signature nobody accepts.
+      - run: npm run check:signing

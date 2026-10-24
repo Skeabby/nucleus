@@ -35,6 +35,7 @@
     "verify": "turbo run build typecheck test && npm run demo:cross-app",
     "clean": "turbo run clean",
     "codegen": "node tools/codegen.mjs",
+    "check:signing": "node tools/sign-catalog.mjs --selftest",
     "scoreboard": "node tools/scoreboard.mjs",
     "nucleus": "node packages/launcher/dist/cli.js",
     "start": "node packages/launcher/dist/cli.js up",

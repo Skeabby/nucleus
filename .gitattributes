@@ -1,2 +1,7 @@
 # Generated files must match byte-for-byte on every platform and in CI.
 docs/scoreboard.md text eol=lf
+
+# N1: a signature covers the *exact bytes*, so the signed-catalogue fixtures
+# must never be rewritten on checkout (a CRLF swap invalidates the signature
+# and the tests would only fail on a Windows runner with autocrlf).
+launcher-rs/crates/nucleus-launcher/tests/fixtures/* -text
