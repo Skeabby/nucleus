@@ -35,6 +35,7 @@ import {
   DocStore,
   migrateLegacyProject,
 } from "./persist.js";
+import { SettingsError, SettingsStore } from "./settings.js";
 import { assetBytesWithNames, buildNucleusZip } from "./nucleus-zip.js";
 
 /** Optional content-addressed asset store (PDF sources…). */
@@ -85,6 +86,8 @@ export interface AppServer {
   /** Actual listening port (useful with `port: 0` in tests). */
   port(): number;
   readonly dataDir: string | null;
+  /** Per-app UI settings (`/api/settings`), always available (persist or not). */
+  readonly settings: SettingsStore;
   close(): Promise<void>;
 }
 
@@ -106,6 +109,10 @@ export async function createAppServer(options: CreateAppServerOptions): Promise<
   const store = persist
     ? DocStore.for(options.dataDir ?? defaultDataDir(), options.id)
     : null;
+
+  // UI settings survive a fresh session (and a reset): they describe the
+  // window, not the document, so they are never cleared by /api/reset.
+  const settings = SettingsStore.for(options.dataDir ?? defaultDataDir(), options.id);
 
   // ---------------------------------------------------------------- restore
   if (store) {
@@ -247,7 +254,7 @@ export async function createAppServer(options: CreateAppServerOptions): Promise<
       const { seq } = await readJson(req);
       const r = session.control.handle({
         method: "command.invoke",
-        params: { name: "tape.restore", params: { seq: Number(seq) }, label: "Restore here" },
+        params: { name: "tape.restore", params: { seq: Number(seq) }, label: "Go back to this point" },
       });
       if (!r.ok) {
         sendJson(res, 400, { ok: false, error: r.error, ...baseSnapshot() });
@@ -292,6 +299,24 @@ export async function createAppServer(options: CreateAppServerOptions): Promise<
         return true;
       }
       sendJson(res, 200, { ok: true, result: r.result ?? { decided: id } });
+      return true;
+    }
+
+    if (path === "/api/settings" && method === "GET") {
+      sendJson(res, 200, { ok: true, settings: await settings.load() });
+      return true;
+    }
+
+    if (path === "/api/settings" && method === "POST") {
+      const body = await readJson(req);
+      try {
+        // Both shapes are accepted: the flat object, or `{ settings: {...} }`.
+        const patch = isRecord(body.settings) ? body.settings : body;
+        sendJson(res, 200, { ok: true, settings: await settings.save(patch) });
+      } catch (error) {
+        if (!(error instanceof SettingsError)) throw error;
+        sendJson(res, 400, { ok: false, error: { kind: "validation", message: error.message } });
+      }
       return true;
     }
 
@@ -473,6 +498,7 @@ export async function createAppServer(options: CreateAppServerOptions): Promise<
       return actualPort;
     },
     dataDir: store?.dir ?? null,
+    settings,
     async close(): Promise<void> {
       hub.close();
       unbindBus();
@@ -486,3 +512,7 @@ export async function createAppServer(options: CreateAppServerOptions): Promise<
 
 /** Re-exported so apps import one module instead of keeping local copies. */
 export { guard, guard as guardRequest, tokenCookie } from "./guard.js";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

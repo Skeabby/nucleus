@@ -1,207 +1,365 @@
-/* kit.js — shared app web kit (@nucleus/app-kit, §4.2/§4.3), vanilla JS.
-   Mounts: Review drawer (pending proposals from the bus), Tape scrubber
-   (seek preview / restore / fork), toasts, SSE live refresh. Apps may pass
-   their own options or call nothing at all — the kit mounts itself. */
+/* kit.js — shared app web kit (@nucleus/app-kit), vanilla JS.
+   Mounts: the command palette (Ctrl+K), the History panel, the review card for
+   pending proposals, toasts and the SSE refresh. Apps may pass their own
+   options or call nothing at all — the kit mounts itself.
+
+   Brief #3 vocabulary: History, "Go back to this point", "Start a copy from
+   here", "Back to now". The fixed bottom scrubber is gone; History is a panel
+   and the numeric scrubber only comes back under View → Developer details. */
 (function () {
   "use strict";
 
-  const qs = (sel) => document.querySelector(sel);
   const state = {
-    options: {
-      highlight: null,
-      onRestore: null,
-      accent: getComputedStyle(document.documentElement).getPropertyValue("--nk-app-accent") || "",
-    },
-    seeking: false,
+    options: { onRestore: null, accent: "" },
+    settings: {},
     lastSeq: 0,
     events: null,
-    drawer: null,
+    review: { host: null, options: {}, pending: [] },
+    history: { host: null, options: {}, records: [], previewSeq: null },
   };
+
+  // ------------------------------------------------------------------ utils
+
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined && text !== null) node.textContent = text;
+    return node;
+  }
+
+  function authHeaders(extra) {
+    return Object.assign({}, extra || {});
+  }
+
+  function escapeHtml(text) {
+    return String(text)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  /** "just now" · "4 min ago" · "2 h ago" — never a raw ISO stamp in the UI. */
+  function relativeTime(iso) {
+    const then = Date.parse(String(iso || ""));
+    if (!Number.isFinite(then)) return "";
+    const seconds = Math.max(0, Math.round((Date.now() - then) / 1000));
+    if (seconds < 45) return "just now";
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 60) return minutes + " min ago";
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) return hours + " h ago";
+    const days = Math.round(hours / 24);
+    return days + " d ago";
+  }
+
+  /** A bus command name is provenance, not a sentence: "pdf.rotatePages" → "Rotate pages". */
+  function plainLabel(record) {
+    if (record.label) return record.label;
+    const tail = String(record.command || "").split(".").pop() || "Change";
+    const spaced = tail.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").toLowerCase();
+    return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+  }
+
+  function isTypingTarget(target) {
+    if (!(target instanceof HTMLElement)) return false;
+    if (target.isContentEditable) return true;
+    const tag = target.tagName;
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+  }
 
   // ------------------------------------------------------------------ toasts
 
   function toast(message, kind) {
-    let host = qs("#nk-toasts");
+    let host = document.getElementById("nk-toasts");
     if (!host) {
-      host = document.createElement("div");
+      host = el("div");
       host.id = "nk-toasts";
       document.body.appendChild(host);
     }
-    const el = document.createElement("div");
-    el.className = "nk-toast" + (kind ? " nk-" + kind : "");
-    el.textContent = message;
-    host.appendChild(el);
-    setTimeout(() => el.remove(), message && kind === "error" ? 6000 : 3200);
+    const node = el("div", "nk-toast" + (kind ? " nk-" + kind : ""), message);
+    host.appendChild(node);
+    setTimeout(() => node.remove(), kind === "error" ? 6000 : 3200);
   }
 
   // ------------------------------------------------------------------ review
-  /* Review drawer: pending proposals. Keyboard: A accept, R reject. */
+  /* A pending proposal is a card at the top of the right panel (or an inline
+     banner in Notes). Plain words, agent id from the proposal itself, and the
+     app's own noun for what changed. */
+
+  const REVIEW_KINDS = { added: "added", removed: "removed", changed: "changed" };
+
+  function mountReview(host, options) {
+    state.review.host = host;
+    state.review.options = options || {};
+    if (host) host.hidden = true;
+    void refreshProposals();
+  }
+
+  /**
+   * Apps that have not migrated to the shared shell still get the card: it
+   * docks bottom-right, where the old drawer used to be. The shell passes its
+   * own host instead.
+   */
+  function ensureReviewHost() {
+    if (state.review.host && state.review.host.isConnected) return state.review.host;
+    // A host that left the document (shell re-render, session restart) is not
+    // a host any more: fall back to the docked card rather than vanish.
+    state.review.host = null;
+    if (!document.body) return null;
+    let host = document.getElementById("nk-review-host");
+    if (!host) {
+      host = el("div");
+      host.id = "nk-review-host";
+      document.body.appendChild(host);
+    }
+    state.review.host = host;
+    return host;
+  }
 
   async function refreshProposals() {
+    const host = ensureReviewHost();
+    if (!host) return;
     let data;
     try {
       data = await fetch("/api/proposals", { headers: authHeaders() }).then((r) => r.json());
     } catch {
       return;
     }
-    const pending = (data.proposals || []).filter((p) => p.status === "pending");
-    if (pending.length === 0 && state.drawer) {
-      state.drawer.classList.remove("nk-visible");
-      state.drawer = null;
+    const pending = (data.proposals || []).filter((proposal) => proposal.status === "pending");
+    state.review.pending = pending;
+    if (pending.length === 0) {
+      host.innerHTML = "";
+      host.hidden = true;
+      return;
     }
-    if (pending.length === 0) return;
-    drawDrawer(pending);
+    drawReview(pending);
   }
 
-  function drawDrawer(pending) {
-    if (!state.drawer) {
-      const root = document.createElement("aside");
-      root.id = "nk-review";
-      root.innerHTML = [
-        "<header><h3>Review</h3></header>",
-        '<div class="nk-body"></div>',
-        '<footer>A accept · R reject · Esc close</footer>',
-      ].join("");
-      document.body.appendChild(root);
-      state.drawer = root;
+  function drawReview(pending) {
+    const host = ensureReviewHost();
+    if (!host) return;
+    const proposal = pending[0];
+    const ids = proposal.touchedNodeIds || [];
+    const actorId = (proposal.actor && proposal.actor.id) || "An agent";
+
+    host.innerHTML = "";
+    const card = el("div", "nk-review");
+
+    const head = el("div", "nk-review__head");
+    head.appendChild(el("span", "nk-review__who", actorId + "\u2019s proposal"));
+    head.appendChild(el("span", "nk-review__count", noun(ids)));
+    card.appendChild(head);
+
+    card.appendChild(el("p", "nk-review__label", proposal.label || plainLabel(proposal)));
+
+    const actions = el("div", "nk-review__actions");
+    const accept = el("button", "c-btn nk-review__accept", "Accept");
+    accept.type = "button";
+    accept.title = "Accept (A)";
+    accept.addEventListener("click", () => void decide(proposal.id, "accept"));
+    const reject = el("button", "c-btn", "Reject");
+    reject.type = "button";
+    reject.title = "Reject (R)";
+    reject.addEventListener("click", () => void decide(proposal.id, "reject"));
+    actions.appendChild(accept);
+    actions.appendChild(reject);
+    if (pending.length > 1) {
+      actions.appendChild(el("span", "nk-review__count", "and " + (pending.length - 1) + " more"));
     }
-    const body = state.drawer.querySelector(".nk-body");
-    body.innerHTML = "";
-    for (const proposal of pending) {
-      const card = document.createElement("div");
-      card.className = "nk-proposal";
-      card.innerHTML = [
-        `<span class="nk-actor">${escapeHtml(proposal.actor.kind)} · ${escapeHtml(proposal.actor.id)}</span>`,
-        '<div class="nk-cmd">' + escapeHtml(proposal.command) + "</div>",
-        '<div class="nk-label">' + escapeHtml(proposal.touchedNodeIds.length + " node(s) touched") + "</div>",
-        '<div class="nk-actions"><button class="nk-accept">Accept</button><button class="nk-reject">Reject</button></div>',
-      ].join("");
-      const [accept, reject] = card.querySelectorAll("button");
-      accept.addEventListener("click", () => decide(proposal.id, "accept"));
-      reject.addEventListener("click", () => decide(proposal.id, "reject"));
-      body.appendChild(card);
-    }
-    state.drawer.classList.add("nk-visible");
+    card.appendChild(actions);
+
+    card.addEventListener("mouseenter", () => preview(ids, "changed"));
+    card.addEventListener("mouseleave", () => preview([], "changed"));
+
+    host.appendChild(card);
+    host.hidden = false;
+  }
+
+  function noun(ids) {
+    const shell = window.NucleusShell;
+    if (shell && typeof shell.noun === "function") return shell.noun(ids);
+    return ids.length === 1 ? "1 change" : ids.length + " changes";
+  }
+
+  function preview(ids, kind) {
+    const highlight = state.review.options && state.review.options.highlight;
+    if (typeof highlight === "function") highlight(ids, REVIEW_KINDS[kind] || "changed");
   }
 
   async function decide(id, action) {
     try {
-      const res = await fetch(`/api/proposals/${encodeURIComponent(id)}/${action}`, {
+      const res = await fetch("/api/proposals/" + encodeURIComponent(id) + "/" + action, {
         method: "POST",
         headers: authHeaders(),
       });
-      if (!res.ok) throw new Error(action + " failed");
+      if (!res.ok) throw new Error(action === "accept" ? "Could not accept the change" : "Could not reject it");
       toast(action === "accept" ? "Change accepted" : "Proposal rejected");
-      state.drawer && state.drawer.classList.remove("nk-visible");
-      state.drawer = null;
+      preview([], "changed");
+      await refreshProposals();
       if (state.options.onRestore) state.options.onRestore();
     } catch (error) {
-      toast(String(error), "error");
+      toast(String((error && error.message) || error), "error");
     }
   }
 
   document.addEventListener("keydown", (event) => {
-    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
-    const visible = state.drawer && state.drawer.classList.contains("nk-visible");
-    if (!visible) return;
+    if (isTypingTarget(event.target)) return;
+    if (!state.review.pending || state.review.pending.length === 0) return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (document.querySelector("#nk-palette.nk-visible") || document.querySelector(".nk-dialog.nk-visible")) return;
     if (event.key === "a" || event.key === "A") {
-      const first = document.querySelector("#nk-review .nk-proposal .nk-accept");
-      first && first.click();
+      const proposal = state.review.pending[0];
+      if (proposal) {
+        event.preventDefault();
+        void decide(proposal.id, "accept");
+      }
     } else if (event.key === "r" || event.key === "R") {
-      const first = document.querySelector("#nk-review .nk-proposal .nk-reject");
-      first && first.click();
-    } else if (event.key === "Escape") {
-      state.drawer.classList.remove("nk-visible");
-      state.drawer = null;
+      const proposal = state.review.pending[0];
+      if (proposal) {
+        event.preventDefault();
+        void decide(proposal.id, "reject");
+      }
     }
   });
 
-  // ---------------------------------------------------------------- scrubber
-  /* Tape scrubber: markers per record, range over seq; scrub = seek preview. */
+  // ----------------------------------------------------------------- history
+  /* History is a panel: every step, who took it, when, and the two things a
+     person actually wants ("Go back to this point", "Start a copy from here"). */
 
-  async function buildScrubber() {
-    const tape = await fetch("/api/tape", { headers: authHeaders() }).then((r) => r.json());
-    if ((tape.records || []).length === 0) return;
-    state.lastSeq = tape.records[tape.records.length - 1].seq;
-    if (qs("#nk-scrubber")) return;
+  function historyView(host, options) {
+    state.history.host = host;
+    state.history.options = options || {};
+    host.innerHTML = "";
+    host.dataset.nkHistory = "";
+    void loadHistory();
+    return host;
+  }
 
-    const root = document.createElement("div");
-    root.id = "nk-scrubber";
-    root.classList.add("nk-visible");
-    root.innerHTML = [
-      '<div class="nk-row">',
-      '  <span class="nk-label">TAPE</span>',
-      '  <input type="range" min="0" max="' + state.lastSeq + '" value="' + state.lastSeq + '" />',
-      '  <span class="nk-label nk-pos">' + state.lastSeq + "/" + state.lastSeq + "</span>",
-      '  <button class="nk-primary" data-nk="restore">Restore here</button>',
-      '  <button data-nk="fork">Fork</button>',
-      '  <button data-nk="live">Live</button>',
-      "</div>",
+  async function loadHistory() {
+    const host = state.history.host;
+    if (!host) return;
+    let tape;
+    try {
+      tape = await fetch("/api/tape", { headers: authHeaders() }).then((r) => r.json());
+    } catch {
+      host.innerHTML = '<div class="nk-history__empty">History is unavailable right now.</div>';
+      return;
+    }
+    const records = (tape.records || []).slice().reverse();
+    state.history.records = records;
+    if (records.length > 0) state.lastSeq = records[0].seq;
+    drawHistory();
+  }
+
+  function drawHistory() {
+    const host = state.history.host;
+    if (!host) return;
+    const records = state.history.records;
+    host.innerHTML = "";
+
+    if (records.length === 0) {
+      host.appendChild(el("div", "nk-history__empty", "No changes yet. Every action lands here, in order."));
+      return;
+    }
+
+    const list = el("div", "nk-history__list");
+    list.setAttribute("role", "list");
+    for (const record of records.slice(0, 200)) {
+      const row = el("div", "nk-history__row");
+      row.setAttribute("role", "listitem");
+      row.dataset.seq = String(record.seq);
+
+      const label = el("div", "nk-history__label");
+      const agent = record.actor && record.actor.kind && record.actor.kind !== "human";
+      const badge = el("span", "nk-actor" + (agent ? " nk-actor--agent" : ""), agent ? record.actor.id : "You");
+      label.appendChild(badge);
+      label.appendChild(el("span", "nk-history__title", plainLabel(record)));
+      row.appendChild(label);
+      row.appendChild(el("span", "nk-history__time", relativeTime(record.ts)));
+
+      const actions = el("div", "nk-history__actions");
+      actions.hidden = true;
+      const back = el("button", "c-btn", "Go back to this point");
+      back.type = "button";
+      back.addEventListener("click", () => void goBack(record.seq));
+      const copy = el("button", "c-btn", "Start a copy from here");
+      copy.type = "button";
+      copy.addEventListener("click", () => void startCopy(record.seq));
+      actions.appendChild(back);
+      actions.appendChild(copy);
+      row.appendChild(actions);
+
+      const reveal = () => {
+        actions.hidden = false;
+      };
+      const conceal = () => {
+        actions.hidden = true;
+      };
+      row.addEventListener("mouseenter", reveal);
+      row.addEventListener("focusin", reveal);
+      row.addEventListener("mouseleave", conceal);
+      row.addEventListener("focusout", conceal);
+
+      list.appendChild(row);
+    }
+    host.appendChild(list);
+
+    // The numeric scrubber was the old bottom bar; it only exists here, and
+    // only when Developer details is on.
+    const scrub = el("div", "nk-history__scrub");
+    scrub.hidden = !document.body.classList.contains("nk-dev");
+    scrub.innerHTML = [
+      '<div class="nk-label">Step <span class="nk-pos">' + state.lastSeq + "/" + state.lastSeq + "</span></div>",
+      '<input type="range" min="0" max="' + state.lastSeq + '" value="' + state.lastSeq + '" />',
+      '<div class="nk-actions"><button class="c-btn" data-nk="now" disabled>Back to now</button></div>',
     ].join("");
-    document.body.appendChild(root);
+    const range = scrub.querySelector("input");
+    const pos = scrub.querySelector(".nk-pos");
+    const now = scrub.querySelector('[data-nk="now"]');
+    range.addEventListener("input", () => {
+      state.history.previewSeq = Number(range.value);
+      pos.textContent = range.value + "/" + state.lastSeq;
+      now.disabled = Number(range.value) >= state.lastSeq;
+    });
+    now.addEventListener("click", () => {
+      range.value = String(state.lastSeq);
+      pos.textContent = state.lastSeq + "/" + state.lastSeq;
+      state.history.previewSeq = null;
+      now.disabled = true;
+      if (state.options.onRestore) state.options.onRestore();
+    });
+    host.appendChild(scrub);
+  }
 
-    const preview = document.createElement("div");
-    preview.id = "nk-preview";
-    preview.innerHTML = "<h4>Tape preview</h4><div class='nk-meta'></div>";
-    document.body.appendChild(preview);
-
-    const range = root.querySelector("input");
-    const pos = root.querySelector(".nk-pos");
-    const meta = preview.querySelector(".nk-meta");
-    range.addEventListener("input", async () => {
-      const seq = Number(range.value);
-      pos.textContent = seq + "/" + state.lastSeq;
-      if (seq === state.lastSeq) {
-        preview.classList.remove("nk-visible");
-        preview.dataset.seq = "";
-        return;
-      }
-      preview.dataset.seq = String(seq);
-      const seek = await fetch("/api/tape/seek", {
+  async function goBack(seq) {
+    try {
+      const res = await fetch("/api/tape/restore", {
         method: "POST",
         headers: authHeaders("application/json"),
         body: JSON.stringify({ seq }),
       }).then((r) => r.json());
-      if (seek.ok) {
-        meta.textContent =
-          "seq " + seq + " · " + Object.keys(seek.preview.nodes).length + " nodes · v" + seek.preview.docVersion;
-        preview.classList.add("nk-visible");
-      }
-    });
+      if (!res.ok) throw new Error((res.error && res.error.message) || "Could not go back");
+      toast("Went back to step " + seq);
+      if (state.options.onRestore) state.options.onRestore();
+      await loadHistory();
+    } catch (error) {
+      toast(String((error && error.message) || error), "error");
+    }
+  }
 
-    root.addEventListener("click", async (event) => {
-      const target = event.target instanceof HTMLElement ? event.target : null;
-      const action = target && target.dataset.nk;
-      if (!action) return;
-      const seq = Number(preview.dataset.seq || range.value);
-      if (action === "live") {
-        preview.dataset.seq = "";
-        preview.classList.remove("nk-visible");
-        range.value = String(state.lastSeq);
-        pos.textContent = state.lastSeq + "/" + state.lastSeq;
-        return;
-      }
-      if (action === "restore") {
-        const res = await fetch("/api/tape/restore", {
-          method: "POST",
-          headers: authHeaders("application/json"),
-          body: JSON.stringify({ seq }),
-        }).then((r) => r.json());
-        if (!res.ok) return toast(res.error && res.error.message, "error");
-        preview.dataset.seq = "";
-        preview.classList.remove("nk-visible");
-        toast("State restored to tape position " + seq);
-        if (state.options.onRestore) state.options.onRestore();
-      } else if (action === "fork") {
-        const res = await fetch("/api/tape/fork", {
-          method: "POST",
-          headers: authHeaders("application/json"),
-          body: JSON.stringify({ seq }),
-        }).then((r) => r.json());
-        if (!res.ok) return toast("Fork failed", "error");
-        toast("Forked document captured — v" + res.state.docVersion + " (" + Object.keys(res.state.nodes).length + " nodes)");
-      }
-    });
+  async function startCopy(seq) {
+    try {
+      const res = await fetch("/api/tape/fork", {
+        method: "POST",
+        headers: authHeaders("application/json"),
+        body: JSON.stringify({ seq }),
+      }).then((r) => r.json());
+      if (!res.ok) throw new Error("Could not start a copy from that step");
+      toast("A copy from step " + seq + " is ready to save");
+    } catch (error) {
+      toast(String((error && error.message) || error), "error");
+    }
   }
 
   // ------------------------------------------------------------------- sse
@@ -214,16 +372,7 @@
       try {
         const record = JSON.parse(event.data);
         state.lastSeq = record.seq || state.lastSeq;
-        const scrubRange = qs("#nk-scrubber input[type=range]");
-        const pos = qs("#nk-scrubber .nk-pos");
-        if (scrubRange && !state.seeking) {
-          scrubRange.max = String(record.seq);
-          scrubRange.value = String(record.seq);
-          if (pos) pos.textContent = record.seq + "/" + record.seq;
-        } else if (pos) {
-          pos.textContent = pos.textContent.replace(/\/\d+$/, "/" + record.seq);
-          scrubRange && (scrubRange.max = String(record.seq));
-        }
+        if (state.history.host) void loadHistory();
       } catch {
         /* a broken frame is dropped, never fatal */
       }
@@ -234,47 +383,89 @@
     };
   }
 
-  // ------------------------------------------------------------------ utils
-
-  function authHeaders(extra) {
-    const headers = Object.assign({}, extra || {});
-    return headers;
-  }
-
-  function escapeHtml(text) {
-    return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  }
-
   // ------------------------------------------------------- command palette
-  /* ⌘K palette: every bus command, schema-driven. Reads /api/describe once,
-     filters as you type, and builds an inline params form from the JSON
-     Schema (strings, numbers, booleans; arrays via JSON or comma lists). */
+  /* Ctrl+K lists the app's own menu items first, then every bus command that
+     no menu item already exposes — de-duplicated by id, not by label. */
 
-  const palette = { root: null, input: null, list: null, foot: null, commands: [], view: [], index: 0, mode: "list", active: null, forms: null };
+  const palette = {
+    root: null,
+    input: null,
+    list: null,
+    foot: null,
+    commands: [],
+    menuItems: [],
+    entries: null,
+    view: [],
+    index: 0,
+    mode: "list",
+    active: null,
+    forms: null,
+  };
+
+  function registerMenuItems(items) {
+    palette.menuItems = Array.isArray(items) ? items : [];
+    palette.entries = null;
+    return palette.menuItems.length;
+  }
 
   async function paletteCommands() {
     if (palette.commands.length) return palette.commands;
     try {
       const data = await fetch("/api/describe", { headers: authHeaders() }).then((r) => r.json());
-      palette.commands = (data.commands || []).filter((c) => c.sideEffects !== "read");
-      palette.commands.push(...(data.commands || []).filter((c) => c.sideEffects === "read"));
+      const all = data.commands || [];
+      palette.commands = all.filter((command) => command.sideEffects !== "read").concat(
+        all.filter((command) => command.sideEffects === "read"),
+      );
     } catch {
       palette.commands = [];
     }
     return palette.commands;
   }
 
+  /** Menu items win over the bus command they wrap (same id, one row). */
+  function paletteEntries() {
+    if (palette.entries) return palette.entries;
+    const used = new Set();
+    const entries = [];
+    for (const item of palette.menuItems) {
+      used.add(item.id);
+      if (item.command) used.add(item.command);
+      entries.push({
+        key: item.id,
+        kind: "menu",
+        label: item.label,
+        hint: item.shortcut || "",
+        section: "Menu",
+        item,
+      });
+    }
+    for (const command of palette.commands) {
+      if (used.has(command.name)) continue;
+      used.add(command.name);
+      entries.push({
+        key: command.name,
+        kind: "command",
+        label: command.title || command.name,
+        hint: command.sideEffects === "read" ? "read" : command.name,
+        section: command.name.split(".")[0],
+        command,
+      });
+    }
+    palette.entries = entries;
+    return entries;
+  }
+
   function palEnsure() {
     if (palette.root) return;
-    const root = document.createElement("div");
+    const root = el("div");
     root.id = "nk-palette";
     root.innerHTML = [
       '<div class="nk-palette__box">',
-      '  <div class="nk-palette__inputrow"><span class="nk-palette__glyph">⌘</span>',
-      '    <input type="text" placeholder="Type a command…" spellcheck="false" />',
+      '  <div class="nk-palette__inputrow"><span class="nk-palette__glyph">\u2318</span>',
+      '    <input type="text" placeholder="Type a command\u2026" spellcheck="false" aria-label="Search commands" />',
       "  </div>",
       '  <div class="nk-palette__list" role="listbox"></div>',
-      '  <div class="nk-palette__foot"><span>↑↓ move · ↵ run · Esc close</span><span class="nk-palette__count"></span></div>',
+      '  <div class="nk-palette__foot"><span>\u2191\u2193 move \u00b7 \u21b5 run \u00b7 Esc close</span><span class="nk-palette__count"></span></div>',
       "</div>",
     ].join("");
     document.body.appendChild(root);
@@ -284,70 +475,100 @@
     palette.foot = root.querySelector(".nk-palette__count");
 
     palette.input.addEventListener("input", () => {
-      if (palette.mode === "params") return; // typing in the form must not refilter
+      if (palette.mode === "params") return;
       palette.view = palFilter(palette.input.value);
       palette.index = 0;
       palRender();
     });
     palette.input.addEventListener("keydown", (event) => {
       if (palette.mode === "params") {
-        if (event.key === "Enter") { event.preventDefault(); void palRun(); }
+        if (event.key === "Enter") {
+          event.preventDefault();
+          void palRun();
+        }
         return;
       }
-      if (event.key === "ArrowDown") { event.preventDefault(); palette.index = Math.min(palette.index + 1, palette.view.length - 1); palRender(); }
-      else if (event.key === "ArrowUp") { event.preventDefault(); palette.index = Math.max(palette.index - 1, 0); palRender(); }
-      else if (event.key === "Enter") {
+      if (event.key === "ArrowDown") {
         event.preventDefault();
-        const command = palette.view[palette.index];
-        if (command) palOpenParams(command);
+        palette.index = Math.min(palette.index + 1, palette.view.length - 1);
+        palRender();
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        palette.index = Math.max(palette.index - 1, 0);
+        palRender();
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        const entry = palette.view[palette.index];
+        if (entry) palOpen(entry);
       }
     });
-    root.addEventListener("mousedown", (event) => { if (event.target === root) palClose(); });
-    root.addEventListener("keydown", (event) => { if (event.key === "Escape") { event.preventDefault(); palClose(); } });
+    root.addEventListener("mousedown", (event) => {
+      if (event.target === root) palClose();
+    });
+    root.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        palClose();
+      }
+    });
   }
 
   function palFilter(query) {
+    const entries = paletteEntries();
     const needle = query.trim().toLowerCase();
-    const all = palette.commands;
-    if (!needle) return all;
-    return all.filter((c) => c.name.toLowerCase().includes(needle) || (c.title || "").toLowerCase().includes(needle));
+    if (!needle) return entries;
+    return entries.filter(
+      (entry) =>
+        entry.key.toLowerCase().includes(needle) ||
+        String(entry.label).toLowerCase().includes(needle) ||
+        (entry.kind === "command" && entry.command.name.toLowerCase().includes(needle)),
+    );
   }
 
   function palRender() {
     const list = palette.list;
     list.innerHTML = "";
     let lastSection = null;
-    palette.view.forEach((command, i) => {
-      const section = command.name.split(".")[0];
+    palette.view.forEach((entry, i) => {
+      const section = entry.section;
       if (section !== lastSection) {
-        const head = document.createElement("div");
-        head.className = "nk-palette__section";
-        head.textContent = section;
-        list.appendChild(head);
+        list.appendChild(el("div", "nk-palette__section", section));
         lastSection = section;
       }
-      const item = document.createElement("button");
+      const item = el("button", "nk-palette__item");
       item.type = "button";
-      item.className = "nk-palette__item";
       item.setAttribute("role", "option");
       item.setAttribute("aria-selected", String(i === palette.index));
       item.innerHTML =
-        '<span class="nk-palette__name">' + escapeHtml(command.name) + "</span>" +
-        '<span class="nk-palette__title">' + escapeHtml(command.title) + "</span>" +
-        '<span class="nk-palette__hint">' + escapeHtml(command.sideEffects) + "</span>";
-      item.addEventListener("click", () => palOpenParams(command));
-      item.addEventListener("mousemove", () => { palette.index = i; });
+        '<span class="nk-palette__name">' + escapeHtml(entry.kind === "menu" ? entry.key : entry.command.name) + "</span>" +
+        '<span class="nk-palette__title">' + escapeHtml(entry.label) + "</span>" +
+        '<span class="nk-palette__hint">' + escapeHtml(entry.kind === "menu" ? entry.hint : entry.command.sideEffects) + "</span>";
+      item.addEventListener("click", () => palOpen(entry));
+      item.addEventListener("mousemove", () => {
+        palette.index = i;
+      });
       list.appendChild(item);
     });
     if (palette.view.length === 0) {
-      const note = document.createElement("div");
-      note.className = "nk-palette__section";
-      note.textContent = palette.commands.length ? "no matching command" : "describe unavailable";
-      list.appendChild(note);
+      list.appendChild(el("div", "nk-palette__section", paletteEntries().length ? "no matching command" : "describe unavailable"));
     }
-    palette.foot.textContent = palette.view.length + "/" + palette.commands.length + " commands";
+    palette.foot.textContent = palette.view.length + "/" + paletteEntries().length + " commands";
     const selected = list.querySelectorAll(".nk-palette__item")[palette.index];
-    selected && selected.scrollIntoView({ block: "nearest" });
+    if (selected && selected.scrollIntoView) selected.scrollIntoView({ block: "nearest" });
+  }
+
+  function palOpen(entry) {
+    if (!entry) return;
+    if (entry.kind === "menu") {
+      palClose();
+      try {
+        entry.item.run();
+      } catch (error) {
+        toast(String((error && error.message) || error), "error");
+      }
+      return;
+    }
+    palOpenParams(entry.command);
   }
 
   /* Build the inline params form from the command's JSON Schema (required
@@ -358,49 +579,44 @@
     palette.active = command;
     palette.mode = "params";
     palette.list.innerHTML = "";
-    const form = document.createElement("div");
-    form.className = "nk-params";
-    const title = document.createElement("div");
-    title.className = "nk-palette__section";
+    const form = el("div", "nk-params");
+    const title = el("div", "nk-palette__section", command.name + (required.length ? " \u2014 fill the required params" : " \u2014 runs with defaults"));
     title.style.padding = "0";
-    title.textContent = command.name + (required.length ? " — fill the required params" : " — runs with defaults");
     form.appendChild(title);
     palette.forms = [];
     for (const field of required) {
-      const props2 = props[field] || { type: "string" };
-      const row = document.createElement("div");
-      row.className = "nk-params__row";
-      const label = document.createElement("label");
+      const spec = props[field] || { type: "string" };
+      const row = el("div", "nk-params__row");
+      const label = el("label", null, field + (spec.type === "boolean" ? "?" : ""));
       label.htmlFor = "nk-param-" + field;
-      label.textContent = field + (props2.type === "boolean" ? "?" : "");
       row.appendChild(label);
       let input;
-      if (props2.type === "boolean") {
-        input = document.createElement("input");
+      if (spec.type === "boolean") {
+        input = el("input");
         input.type = "checkbox";
       } else {
-        input = document.createElement(props2.type === "string" && (props2.maxLength || "") > 60 ? "textarea" : "input");
-        input.type = props2.type === "number" || props2.type === "integer" ? "number" : "text";
-        if (props2.type === "string" && props2.maxLength) input.maxLength = props2.maxLength;
+        input = el(spec.type === "string" && (spec.maxLength || 0) > 60 ? "textarea" : "input");
+        input.type = spec.type === "number" || spec.type === "integer" ? "number" : "text";
+        if (spec.type === "string" && spec.maxLength) input.maxLength = spec.maxLength;
       }
       input.id = "nk-param-" + field;
       input.dataset.field = field;
-      input.dataset.ptype = props2.type === "integer" ? "integer" : props2.type || "string";
+      input.dataset.ptype = spec.type === "integer" ? "integer" : spec.type || "string";
       row.appendChild(input);
       form.appendChild(row);
       palette.forms.push(input);
     }
-    const actions = document.createElement("div");
-    actions.className = "nk-params__row";
-    actions.innerHTML = '<button type="button" class="c-btn c-btn--accent" data-nk="run">Run</button>' +
+    const actions = el("div", "nk-params__row");
+    actions.innerHTML =
+      '<button type="button" class="c-btn c-btn--primary" data-nk="run">Run</button>' +
       '<button type="button" class="c-btn" data-nk="back">Back</button>';
     actions.querySelector('[data-nk="run"]').addEventListener("click", () => void palRun());
     actions.querySelector('[data-nk="back"]').addEventListener("click", () => palBack());
     form.appendChild(actions);
     palette.list.appendChild(form);
     const first = palette.forms[0];
-    first && first.focus();
-    palette.foot.textContent = command.name + (required.length ? "" : " · ↵  run");
+    if (first) first.focus();
+    palette.foot.textContent = command.name + (required.length ? "" : " \u00b7 \u21b5 run");
   }
 
   function palBack() {
@@ -422,7 +638,11 @@
     if (type === "array") {
       const text = String(raw).trim();
       if (!text) return [];
-      try { return JSON.parse(text); } catch { return text.split(",").map((piece) => piece.trim()); }
+      try {
+        return JSON.parse(text);
+      } catch {
+        return text.split(",").map((piece) => piece.trim());
+      }
     }
     return raw;
   }
@@ -443,12 +663,12 @@
       toast("Ran " + command.name);
       if (state.options.onRestore) state.options.onRestore();
     } catch (error) {
-      toast(String(error.message || error), "error");
+      toast(String((error && error.message) || error), "error");
     }
   }
 
   function palClose() {
-    palette.root && palette.root.classList.remove("nk-visible");
+    if (palette.root) palette.root.classList.remove("nk-visible");
     palette.mode = "list";
     palette.active = null;
     palette.forms = null;
@@ -457,16 +677,17 @@
 
   async function openPalette() {
     palEnsure();
-    void paletteCommands().then((commands) => {
-      palette.commands = commands;
-      palette.view = palFilter("");
-      palette.index = 0;
-      palRender();
-      palette.root.classList.add("nk-visible");
-      palette.input.focus();
-    });
+    await paletteCommands();
+    palette.entries = null;
+    palette.view = palFilter("");
+    palette.index = 0;
+    palRender();
+    palette.root.classList.add("nk-visible");
+    palette.input.focus();
   }
 
+  // The palette is the kit's: one binding, whichever chrome the app uses.
+  // The shell registers its menu items on top, so Ctrl+K lists both.
   document.addEventListener("keydown", (event) => {
     const mod = event.ctrlKey || event.metaKey;
     if (mod && (event.key === "k" || event.key === "K")) {
@@ -482,13 +703,25 @@
     if (state.options.accent) {
       document.documentElement.style.setProperty("--nk-accent", state.options.accent);
     }
+    // Always show pending proposals: the shell uses its own host, an app that
+    // has not migrated gets the card docked bottom-right.
     void refreshProposals();
-    void buildScrubber().then(connectEvents);
+    connectEvents();
   }
 
-  window.NucleusKit = Object.freeze({ mount, toast, openPalette });
+  window.NucleusKit = Object.freeze({
+    mount,
+    toast,
+    openPalette,
+    registerMenuItems,
+    mountReview,
+    historyView,
+    refreshProposals,
+    get menuCount() {
+      return palette.menuItems.length;
+    },
+  });
 
-  // auto-mount once the app page is ready (apps may re-mount with options)
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => mount());
   } else {

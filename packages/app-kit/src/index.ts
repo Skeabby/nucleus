@@ -29,3 +29,12 @@ export {
   type AssetStoreLike,
   type CreateAppServerOptions,
 } from "./server.js";
+export {
+  SETTINGS_KEYS,
+  SETTINGS_SCHEMA,
+  SettingsError,
+  SettingsStore,
+  settingsFor,
+  validateSettings,
+  type SettingValue,
+} from "./settings.js";

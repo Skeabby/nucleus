@@ -289,6 +289,43 @@
 > are untouched (no new commands, no state changes). Gates: `npm run verify` PASS; TS suites
 > unchanged at **163** (frontends remain unmeshed vanilla JS); app smoke checks PASS for all three
 > servers; Rust untouched (126).
+>
+> *Superseded in part by Update #18: the toolstrip + inspector chrome described here is replaced by
+> the shared shell (menu bar, contextual options bar, Properties panel, icon rail, History panel).*
+
+> **Update #18 (2026-10-24) — UI pass, part 1 (U1): one shell for every app, and a vocabulary that
+> stops leaking.** The maintainer's verdict on the craft chrome ("the apps' UI is horrible, hard to
+> understand") traced to structure, not to colour: **25** `c-btn`s in PDF Workbench's toolstrip, four
+> ways to add a file, every action implemented up to three times (toolstrip, selection bar,
+> inspector), and internal words (`TAPE · Restore here · Fork · Live`, "every action is a bus
+> command", "N node(s) touched") sitting in the UI. `@nucleus/app-kit` now ships **`kit/shell.js`**, a
+> declarative shell (`NucleusShell.mount({ app, menus, primary, options, rail, panels, status,
+> enabled, noun, highlight, main })` + `setContext`) that owns the whole frame: WAI-ARIA **menu bar**
+> (roles, arrow keys, Esc, typeahead, roving tabindex), a **contextual options bar** that can only
+> reference menu ids, one **shortcut registry** (duplicate shortcuts throw at mount; `Ctrl+K` is
+> reserved for the palette), **confirmation dialogs** for `danger` items (never in the options bar),
+> a right-click menu reusing the same registry, an **icon rail** (inline stroke SVG set, no emoji),
+> **Properties = information, never actions**, and a status bar. Internals move behind *View →
+> Developer details* (`[data-dev]`, `body.nk-dev`). The kit's fixed bottom scrubber is gone: **History
+> is a panel** (actor badge — cyan `--nk-ai` when an agent did it —, plain label, relative time,
+> *Go back to this point*, *Start a copy from here*, *Back to now*), and a pending proposal is an
+> inline **card** (`<actor.id>’s proposal`, the app's noun, Accept/Reject on `A`/`R`), not a drawer.
+> `Ctrl+K` now lists **menu items + bus commands de-duplicated by id** (a menu item declares the
+> `command` it wraps). Tokens: `--c-sans` with **Inter embedded locally** (`kit/fonts/Inter-Variable.ttf`
+> + OFL, `@font-face`, no remote asset, `font/ttf` MIME), mono demoted to numbers/shortcuts/code,
+> every text token re-tuned to clear **WCAG AA on every surface in both themes** (`--c-faint`
+> `#5f5a74` → `#9490aa` was 2.5:1), and `--c-on-accent` switched to dark ink — white on `#F472B6`
+> is 2.2:1, ink is 6.9:1. App accents are now their launcher category colours (PDF `#E85A6C`, Text
+> `#8AB4F8`, Image `#F472B6`; violet stays launcher-only, cyan is agent-only). New **`GET/POST
+> /api/settings`** (`src/settings.ts`) persists `developerDetails`, `theme`, `thumbnailSize`,
+> `viewMode`, `collapsedSections`, `panelWidths` to `%APPDATA%\Nucleus\settings\<appId>.json` with an
+> allowlist (unknown key → `400 validation`), atomic writes, and no reliance on `localStorage` (the
+> launcher picks a new port per launch, so the origin — and every origin-scoped store — changes).
+> Gates: app-kit **80** tests (5 new suites: `shell` in jsdom, `settings` over HTTP, `kit` for the
+> review card, and the three guards `contrast`, `accent` — parsed from the Rust category table —,
+> `jargon`), `npm run verify`
+> PASS. The three app frontends migrate in U2–U4; until then the `jargon`/`accent` guards cover the
+> kit, with each app added to `MIGRATED` as it lands.
 
 **Codename:** `nucleus` · monorepo root `nucleus` · packages `@nucleus/*`
 

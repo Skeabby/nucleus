@@ -1,222 +1,236 @@
 /* kit.css — shared app chrome (part of @nucleus/app-kit, part of §4.2).
-   Palette: launcher tokens, app accent injected per app via --app-accent.
-   Hard edges, hairlines, no glow, no hover lift, no emoji. */
+   Palette: launcher tokens, app accent injected per app via --nk-app-accent.
+   Hard edges, hairlines, no glow, no hover lift, no emoji.
+
+   Brief #3: the fixed bottom tape bar is gone. History is a panel (rail icon +
+   View → History) written in plain words, and a pending agent proposal is a
+   card, not a drawer. Cyan (--nk-ai) means "an agent did this" and nothing
+   else. The old vocabulary only survives behind [data-dev]. */
 
 :root {
   --nk-ink: #17141f;
   --nk-surface: #211d2e;
   --nk-panel: #2a2638;
   --nk-text: #ece9f5;
-  --nk-muted: #9b96ad;
+  --nk-strong: #ffffff;
+  --nk-muted: #a5a0b8;
+  --nk-faint: #9490aa;
   --nk-line: rgba(236, 233, 245, 0.14);
-  --nk-accent: var(--nk-violet, #6d5ef8);
-  --nk-font: "Segoe UI", system-ui, sans-serif;
+  --nk-line-strong: rgba(236, 233, 245, 0.24);
+  --nk-accent: var(--nk-app-accent, #6d5ef8);
+  --nk-ai: #22d3ee;
+  --nk-red: #e85a6c;
+  --nk-sans: "Inter", "Segoe UI", system-ui, sans-serif;
   --nk-mono: "Cascadia Code", Consolas, monospace;
 }
 
-/* Scubber ------------------------------------------------------------------ */
+/* ── History panel ─────────────────────────────────────────────────── */
 
-#nk-scrubber {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 9500;
-  display: none;
-  border-top: 1px solid var(--nk-line);
-  background: var(--nk-surface);
+.nk-history {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  font-family: var(--nk-sans);
+  font-size: 12.5px;
   color: var(--nk-text);
-  font-family: var(--nk-font);
-  font-size: 12px;
-  padding: 8px 14px 10px;
 }
 
-#nk-scrubber.nk-visible {
-  display: block;
+.nk-history__list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 
-#nk-scrubber .nk-row {
+.nk-history__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--nk-line);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.nk-history__row:hover { background: var(--nk-panel); }
+.nk-history__row[aria-current="true"] { box-shadow: inset 2px 0 0 var(--nk-accent); background: var(--nk-panel); }
+
+.nk-history__label {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 7px;
+  min-width: 0;
+  color: var(--nk-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-
-#nk-scrubber input[type="range"] {
-  flex: 1;
-  accent-color: var(--nk-accent);
-}
-
-#nk-scrubber .nk-label {
-  color: var(--nk-muted);
+.nk-history__time {
   font-family: var(--nk-mono);
+  font-size: 10.5px;
+  color: var(--nk-faint);
   white-space: nowrap;
 }
+.nk-history__actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.nk-history__actions[hidden] { display: none; }
 
-#nk-scrubber button,
-#nk-review button,
-#nk-toasts button {
-  border: 1px solid var(--nk-line);
+/* Who did it: "You" is neutral, an agent id is tinted cyan. */
+.nk-actor {
+  display: inline-block;
+  flex: none;
+  padding: 0 6px;
+  font-family: var(--nk-sans);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 16px;
+  border: 1px solid var(--nk-line-strong);
+  color: var(--nk-muted);
+  white-space: nowrap;
+}
+.nk-actor--agent { border-color: var(--nk-ai); color: var(--nk-ai); }
+
+.nk-history__empty {
+  padding: 14px 12px;
+  color: var(--nk-muted);
+  font-size: 12px;
+}
+
+/* The numeric scrubber was the TAPE bar; it only comes back here, under
+   View → Developer details. */
+.nk-history__scrub {
+  border-top: 1px solid var(--nk-line);
+  padding: 10px 12px;
+}
+.nk-history__scrub[hidden] { display: none; }
+.nk-history__scrub input[type="range"] { width: 100%; accent-color: var(--nk-accent); }
+.nk-history__scrub .nk-label {
+  font-family: var(--nk-mono);
+  font-size: 10.5px;
+  color: var(--nk-muted);
+}
+
+/* ── Review card (a pending proposal) ──────────────────────────────── */
+
+/* Apps that have not migrated to the shared shell get the card docked where
+   the old drawer used to sit; the shell hosts it in the right panel. */
+#nk-review-host {
+  position: fixed;
+  right: 14px;
+  bottom: 34px;
+  z-index: 9600;
+  width: 302px;
+}
+#nk-review-host[hidden] { display: none; }
+
+.nk-review {
+  border-bottom: 1px solid var(--nk-line);
+  border-left: 2px solid var(--nk-ai);
+  background: color-mix(in srgb, var(--nk-ai) 7%, var(--nk-panel));
+  padding: 10px 12px;
+}
+.nk-review[hidden] { display: none; }
+
+.nk-review__head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 4px;
+}
+.nk-review__who {
+  font-family: var(--nk-sans);
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--nk-ai);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nk-review__count {
+  margin-left: auto;
+  font-family: var(--nk-mono);
+  font-size: 10.5px;
+  color: var(--nk-muted);
+  white-space: nowrap;
+}
+.nk-review__label {
+  margin: 0 0 8px;
+  font-family: var(--nk-sans);
+  font-size: 12.5px;
+  color: var(--nk-text);
+}
+.nk-review__actions { display: flex; gap: 6px; }
+.nk-review__actions .c-btn { min-height: 30px; }
+.nk-review__accept {
+  border-color: var(--nk-ai);
+  background: color-mix(in srgb, var(--nk-ai) 18%, transparent);
+  color: var(--nk-strong);
+  font-weight: 600;
+}
+.nk-review__accept:hover { background: color-mix(in srgb, var(--nk-ai) 30%, transparent); }
+
+/* Ghost preview: what the proposal would add, remove or change. */
+.nk-ghost--removed { opacity: 0.4; outline: 1px dashed var(--nk-ai); outline-offset: -1px; }
+.nk-ghost--added { outline: 1px solid var(--nk-ai); outline-offset: -1px; }
+.nk-ghost--changed { outline: 1px solid #f5a524; outline-offset: -1px; }
+.nk-ghost__tag {
+  font-family: var(--nk-sans);
+  font-size: 10.5px;
+  color: var(--nk-ai);
+}
+
+/* ── Shared buttons used by kit surfaces ───────────────────────────── */
+
+.nk-history button,
+.nk-review button,
+.nk-toast button {
+  border: 1px solid var(--nk-line-strong);
   background: var(--nk-panel);
   color: var(--nk-text);
   border-radius: 0;
-  padding: 4px 10px;
+  min-height: 28px;
+  padding: 0 10px;
   font: inherit;
+  font-size: 12px;
   cursor: pointer;
 }
+.nk-history button:hover,
+.nk-review button:hover { color: var(--nk-strong); border-color: var(--nk-line-strong); }
 
-#nk-scrubber button.nk-primary {
-  border-color: var(--nk-accent);
-  color: var(--nk-text);
-}
-
-#nk-preview {
-  position: fixed;
-  right: 14px;
-  bottom: 52px;
-  z-index: 9500;
-  display: none;
-  max-width: 340px;
-  border: 1px solid var(--nk-line);
-  background: var(--nk-surface);
-  color: var(--nk-text);
-  font-family: var(--nk-font);
-  font-size: 12px;
-  padding: 10px 12px;
-}
-
-#nk-preview.nk-visible {
-  display: block;
-}
-
-#nk-preview h4 {
-  margin: 0 0 6px;
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--nk-muted);
-  font-weight: 600;
-}
-
-#nk-preview .nk-meta {
-  font-family: var(--nk-mono);
-  color: var(--nk-muted);
-}
-
-/* Review drawer (proposals) ------------------------------------------------ */
-
-#nk-review {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 320px;
-  z-index: 9600;
-  display: none;
-  flex-direction: column;
-  border-left: 1px solid var(--nk-line);
-  background: var(--nk-surface);
-  color: var(--nk-text);
-  font-family: var(--nk-font);
-  font-size: 13px;
-}
-
-#nk-review.nk-visible {
-  display: flex;
-}
-
-#nk-review header {
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--nk-line);
-}
-
-#nk-review header h3 {
-  margin: 0;
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--nk-muted);
-  font-weight: 600;
-}
-
-#nk-review .nk-body {
-  overflow: auto;
-  flex: 1;
-  padding: 12px 14px;
-}
-
-#nk-review .nk-proposal {
-  margin-bottom: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--nk-line);
-  background: var(--nk-panel);
-}
-
-#nk-review .nk-proposal .nk-actor {
-  display: inline-block;
-  font-family: var(--nk-mono);
-  font-size: 11px;
-  padding: 1px 6px;
-  border: 1px solid var(--nk-cyan, #22d3ee);
-  color: var(--nk-cyan, #22d3ee);
-}
-
-#nk-review .nk-proposal .nk-cmd {
-  font-family: var(--nk-mono);
-  margin-top: 6px;
-}
-
-#nk-review .nk-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-#nk-review .nk-actions button.nk-accept {
-  border-color: var(--nk-accent);
-}
-
-#nk-review footer {
-  padding: 10px 14px;
-  border-top: 1px solid var(--nk-line);
-  color: var(--nk-muted);
-  font-size: 11px;
-}
-
-/* Toasts ------------------------------------------------------------------- */
+/* ── Toasts ────────────────────────────────────────────────────────── */
 
 #nk-toasts {
   position: fixed;
   left: 50%;
-  bottom: 20px;
+  bottom: 34px;
   transform: translateX(-50%);
   z-index: 9700;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-family: var(--nk-font);
-  font-size: 13px;
+  font-family: var(--nk-sans);
+  font-size: 12.5px;
 }
 
 #nk-toasts .nk-toast {
   padding: 8px 14px;
   background: var(--nk-surface);
   color: var(--nk-text);
-  border: 1px solid var(--nk-line);
-  animation: nk-toast-in 120ms linear;
+  border: 1px solid var(--nk-line-strong);
 }
 
 #nk-toasts .nk-toast.nk-error {
-  border-color: var(--nk-red, #e85a6c);
-  color: var(--nk-red, #e85a6c);
+  border-color: var(--nk-red);
+  color: var(--nk-red);
 }
 
-@keyframes nk-toast-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
+@media (prefers-reduced-motion: reduce) {
+  #nk-toasts .nk-toast { animation: none; }
 }

@@ -112,6 +112,7 @@ function measureTs() {
   const tools = federationTools();
   const packages = countWorkspaces(join(root, "packages"));
   const appsDirs = countWorkspaces(join(root, "apps"));
+  const uiGuards = measureUiGuards();
 
   return [
     "### TypeScript",
@@ -120,6 +121,7 @@ function measureTs() {
     "|---|---|---|",
     `| Build, typecheck and test tasks pass | **${tasks[1]} / ${tasks[2]}** | \`npm run verify\` |`,
     `| TypeScript unit tests | **${testTotal}** (${testDetail}) | \`npm run test\` |`,
+    `| UI guards: plain vocabulary, WCAG AA contrast, accent = launcher category | **${uiGuards} tests** | \`npx vitest run --root packages/app-kit test/jargon.test.ts test/contrast.test.ts test/accent.test.ts\` |`,
     `| Apps joined into one session → unified commands | **${commands} commands from ${countApps(apps)} apps** (${apps}) | \`npm run demo:cross-app\` |`,
     `| One undo path across those apps: ${edits} edits in ${countApps(apps)} apps, unwound then replayed | **${passed} / ${passed} checks passed** | \`npm run demo:cross-app\` |`,
     `| Export from the edited state is a readable PDF | **${exportedPages} pages read back** | \`npm run demo:cross-app -- --export\` |`,
@@ -130,6 +132,23 @@ function measureTs() {
     "extraction, assistant permissions enforced from the manifest, a scripted demo video under 60 s.",
     "Those land with v0.4; today's proof stops where the checks stop.",
   ].join("\n");
+}
+
+/**
+ * The three UI guards (brief #3): vocabulary, contrast, accents. They are the
+ * acceptance for "the UI stopped leaking internals", so they get their own row
+ * instead of hiding inside the app-kit total.
+ */
+function measureUiGuards() {
+  const output = run(
+    "npx vitest run --root packages/app-kit test/jargon.test.ts test/contrast.test.ts test/accent.test.ts",
+  );
+  const passed = Number(/Tests\s+(\d+) passed/.exec(output)?.[1] ?? 0);
+  if (passed === 0) {
+    process.stderr.write("scoreboard: could not read the UI guard test count\n");
+    process.exit(1);
+  }
+  return passed;
 }
 
 /** One MCP round-trip against the real server: initialize + tools/list. */

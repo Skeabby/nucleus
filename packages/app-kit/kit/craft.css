@@ -1,7 +1,21 @@
 /* craft.css — the app design system (part of @nucleus/app-kit).
    Chrome language shared by every Nucleus app, distilled from the launcher:
    ink surfaces, hairlines, hard edges, HUD type, one accent per app.
-   Requires kit.css (it sits underneath overlays). Zero dependencies. */
+   Requires kit.css (it sits underneath overlays). Zero dependencies.
+
+   Brief #3 rules baked in here: sans by default (mono only for numbers,
+   shortcuts and code), every text token clears WCAG AA on every surface it
+   sits on, one accent per app = its launcher category colour, cyan is reserved
+   for agent output (--nk-ai), violet is launcher-only. */
+
+/* Inter, embedded locally: no remote asset, works offline. OFL next to it. */
+@font-face {
+  font-family: "Inter";
+  src: url("/_kit/fonts/Inter-Variable.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
 
 :root {
   /* Surfaces — dark is the base theme */
@@ -15,17 +29,20 @@
   /* Type */
   --c-text: #ece9f5;
   --c-text-strong: #ffffff;
-  --c-muted: #9b96ad;
-  --c-faint: #5f5a74;
+  --c-muted: #a5a0b8;       /* 5.8:1 on --c-panel */
+  --c-faint: #9490aa;       /* 4.8:1 on --c-panel — the floor for AA */
 
   /* The one accent (--nk-app-accent may override per app) */
   --c-accent: var(--nk-accent, var(--nk-app-accent, #6d5ef8));
   --c-accent-ink: #8f85ff;
-  --c-on-accent: #ffffff;
+  /* Accent fills carry dark ink: white on #F472B6 or #8AB4F8 fails AA. */
+  --c-on-accent: #17141f;
   --c-good: #3ecf8e;
   --c-warn: #f5a524;
   --c-red: #e85a6c;
-  --c-cyan: var(--nk-cyan, #22d3ee);
+  /* Cyan means "this came from an agent", nothing else. */
+  --nk-ai: #22d3ee;
+  --c-cyan: var(--nk-ai);
 
   /* Metrics */
   --c-strip-h: 46px;
@@ -34,7 +51,12 @@
   --c-inspect-w: 288px;
   --c-rail-pad: 12px;
 
-  --c-font: "Segoe UI", system-ui, sans-serif;
+  --nk-menubar-h: 40px;
+  --nk-optionsbar-h: 46px;
+  --nk-iconrail-w: 44px;
+
+  --c-sans: "Inter", "Segoe UI", system-ui, sans-serif;
+  --c-font: var(--c-sans);
   --c-mono: "Cascadia Code", Consolas, monospace;
 }
 
@@ -48,8 +70,9 @@
   --c-line-strong: rgba(23, 20, 31, 0.28);
   --c-text: #242031;
   --c-text-strong: #17141f;
-  --c-muted: #6b667f;
-  --c-faint: #a29db5;
+  --c-muted: #5b566b;       /* 5.4:1 on white */
+  --c-faint: #605b72;       /* 4.9:1 on white */
+  --c-accent-ink: #4b3fd0;
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]):not([data-theme="light"]) {
@@ -61,8 +84,9 @@
     --c-line-strong: rgba(23, 20, 31, 0.28);
     --c-text: #242031;
     --c-text-strong: #17141f;
-    --c-muted: #6b667f;
-    --c-faint: #a29db5;
+    --c-muted: #5b566b;
+    --c-faint: #605b72;
+    --c-accent-ink: #4b3fd0;
   }
 }
 
@@ -90,7 +114,7 @@ body {
 *::-webkit-scrollbar-thumb:hover { background: var(--c-raised); }
 *::-webkit-scrollbar-corner { background: transparent; }
 
-:focus-visible { outline: 1px solid var(--c-accent-ink); outline-offset: -1px; }
+:focus-visible { outline: 2px solid var(--c-accent-ink); outline-offset: 1px; }
 
 button { font: inherit; color: inherit; }
 input, select, textarea { font: inherit; color: inherit; }
@@ -255,12 +279,12 @@ body:has(#nk-scrubber.nk-visible) .c-app {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 9px var(--c-rail-pad) 7px;
-  font-family: var(--c-mono);
-  font-size: 10px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--c-faint);
+  padding: 9px var(--c-rail-pad) 8px;
+  font-family: var(--c-sans);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--c-text);
   border-bottom: 1px solid var(--c-line);
   user-select: none;
   flex: none;
@@ -461,11 +485,10 @@ body:has(#nk-scrubber.nk-visible) .c-app {
   font-size: 12px;
 }
 .c-prop__label {
-  font-family: var(--c-mono);
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--c-faint);
+  font-family: var(--c-sans);
+  font-size: 11.5px;
+  letter-spacing: 0;
+  color: var(--c-muted);
   flex: none;
 }
 .c-prop__value {
@@ -476,12 +499,12 @@ body:has(#nk-scrubber.nk-visible) .c-app {
 }
 .c-prop__value code { font-family: var(--c-mono); font-size: 11px; color: var(--c-muted); }
 .c-section {
-  padding: 10px var(--c-rail-pad) 6px;
-  font-family: var(--c-mono);
-  font-size: 10px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--c-faint);
+  padding: 12px var(--c-rail-pad) 6px;
+  font-family: var(--c-sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--c-muted);
   user-select: none;
 }
 
@@ -494,13 +517,14 @@ body:has(#nk-scrubber.nk-visible) .c-app {
   padding: 0 14px;
   background: var(--c-surface);
   border-top: 1px solid var(--c-line);
-  font-family: var(--c-mono);
-  font-size: 10.5px;
+  font-family: var(--c-sans);
+  font-size: 11.5px;
   color: var(--c-muted);
   user-select: none;
   overflow: hidden;
   white-space: nowrap;
 }
+.c-status .c-mono { font-family: var(--c-mono); font-size: 11px; }
 .c-status__spring { flex: 1; }
 .c-status .c-dot {
   width: 6px;
@@ -522,12 +546,12 @@ body:has(#nk-scrubber.nk-visible) .c-app {
   user-select: none;
 }
 .c-empty__kick {
-  font-family: var(--c-mono);
-  font-size: 10px;
-  letter-spacing: 0.3em;
-  text-transform: uppercase;
-  color: var(--c-faint);
-  margin-bottom: 10px;
+  font-family: var(--c-sans);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--c-muted);
+  margin-bottom: 8px;
 }
 .c-empty h1 {
   margin: 0;
@@ -642,3 +666,301 @@ body:has(#nk-scrubber.nk-visible) .c-app {
   color: var(--c-faint);
   font-family: var(--c-mono);
 }
+
+/* ══ Shared shell (NucleusShell — brief #3 §3) ═════════════════════════ */
+
+.nk-app {
+  display: grid;
+  grid-template-rows: var(--nk-menubar-h) var(--nk-optionsbar-h) minmax(0, 1fr) var(--c-status-h);
+  height: 100vh;
+}
+
+/* ── Menu bar ──────────────────────────────────────────────────────── */
+
+.nk-menubar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 10px;
+  min-width: 0;
+  background: var(--c-surface);
+  border-bottom: 1px solid var(--c-line);
+  user-select: none;
+}
+.nk-menubar__brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  padding-right: 12px;
+  margin-right: 6px;
+  border-right: 1px solid var(--c-line);
+  flex: none;
+}
+.nk-menubar__mark {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  background: var(--c-accent);
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+.nk-menubar__name {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--c-text-strong);
+  white-space: nowrap;
+}
+.nk-menubar__spring { flex: 1; min-width: 8px; }
+
+.nk-menubar__btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--c-text);
+  font: inherit;
+  font-size: 12.5px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.nk-menubar__btn:hover,
+.nk-menubar__btn[aria-expanded="true"] { background: var(--c-panel); color: var(--c-text-strong); }
+
+.nk-menubar__palette {
+  font-family: var(--c-mono);
+  font-size: 11px;
+  color: var(--c-muted);
+  height: 26px;
+  min-height: 26px;
+  padding: 0 9px;
+  margin-right: 10px;
+  border: 1px solid var(--c-line);
+}
+.nk-menubar__palette:hover { color: var(--c-text-strong); border-color: var(--c-line-strong); background: var(--c-panel); }
+
+/* The one filled-accent control in an app (P1) */
+.c-btn--primary {
+  appearance: none;
+  min-height: 30px;
+  padding: 0 16px;
+  border: 1px solid var(--c-accent);
+  background: var(--c-accent);
+  color: var(--c-on-accent);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 650;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.c-btn--primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--c-accent) 88%, #ffffff);
+  border-color: color-mix(in srgb, var(--c-accent) 88%, #ffffff);
+  color: var(--c-on-accent);
+}
+.c-btn--primary:disabled { opacity: 0.45; cursor: default; }
+
+/* ── Dropdown menus ────────────────────────────────────────────────── */
+
+.nk-menu {
+  position: fixed;
+  z-index: 9000;
+  min-width: 224px;
+  padding: 4px 0;
+  background: var(--c-surface);
+  border: 1px solid var(--c-line-strong);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
+}
+.nk-menu[hidden] { display: none; }
+
+.nk-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+  color: var(--c-text);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.nk-menu__item:hover:not([aria-disabled="true"]),
+.nk-menu__item:focus-visible { background: var(--c-panel); color: var(--c-text-strong); }
+.nk-menu__item[aria-disabled="true"] { color: var(--c-faint); cursor: default; }
+.nk-menu__item--danger { color: var(--c-red); }
+.nk-menu__item--danger[aria-disabled="true"] { color: color-mix(in srgb, var(--c-red) 45%, transparent); }
+.nk-menu__check { width: 12px; flex: none; color: var(--c-accent-ink); font-size: 11px; }
+.nk-menu__label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nk-menu__key {
+  margin-left: auto;
+  font-family: var(--c-mono);
+  font-size: 10.5px;
+  color: var(--c-faint);
+  white-space: nowrap;
+}
+.nk-menu__sep { height: 1px; margin: 4px 0; background: var(--c-line); }
+
+/* ── Options bar (contextual subset of the menus) ──────────────────── */
+
+.nk-optionsbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  min-width: 0;
+  background: var(--c-ink);
+  border-bottom: 1px solid var(--c-line);
+  overflow: hidden;
+}
+.nk-optionsbar__hint {
+  color: var(--c-muted);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nk-optionsbar__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--c-text);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.nk-optionsbar__label .c-chip { font-weight: 400; }
+.nk-optionsbar__spring { flex: 1; min-width: 8px; }
+.c-status__spring { flex: 1; }
+.nk-optionsbar .c-btn { min-height: 30px; }
+
+/* ── Body: icon rail · left panel · main · right panel ─────────────── */
+
+.nk-body {
+  position: relative;
+  display: grid;
+  grid-template-columns:
+    var(--nk-iconrail-w, 44px)
+    var(--nk-left-w, 0px)
+    minmax(0, 1fr)
+    var(--nk-right-w, 0px);
+  min-height: 0;
+}
+
+.nk-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 0;
+  background: var(--c-surface);
+  border-right: 1px solid var(--c-line);
+}
+.nk-rail[hidden] { display: none; }
+.nk-rail__btn {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  min-height: 32px;
+  border: 0;
+  background: transparent;
+  color: var(--c-muted);
+  cursor: pointer;
+}
+.nk-rail__btn:hover { background: var(--c-panel); color: var(--c-text-strong); }
+.nk-rail__btn[aria-pressed="true"] {
+  background: var(--c-panel);
+  color: var(--c-text-strong);
+  box-shadow: inset 2px 0 0 var(--c-accent);
+}
+.nk-rail__btn svg { display: block; }
+
+.nk-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--c-surface);
+}
+.nk-panel--left { border-right: 1px solid var(--c-line); }
+.nk-panel--right { border-left: 1px solid var(--c-line); }
+.nk-panel[hidden] { display: none; }
+
+.nk-main {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--c-ink);
+}
+.nk-main > * { flex: 1; min-height: 0; }
+
+/* ── Confirmation dialog ───────────────────────────────────────────── */
+
+.nk-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 9500;
+  display: none;
+  place-items: center;
+  background: color-mix(in srgb, var(--c-ink) 62%, transparent);
+}
+.nk-dialog.nk-visible { display: grid; }
+.nk-dialog__box {
+  width: min(440px, 92vw);
+  background: var(--c-surface);
+  border: 1px solid var(--c-line-strong);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  padding: 18px 20px;
+}
+.nk-dialog__title { margin: 0 0 6px; font-size: 14px; font-weight: 650; color: var(--c-text-strong); }
+.nk-dialog__body { margin: 0 0 16px; font-size: 12.5px; color: var(--c-muted); }
+.nk-dialog__actions { display: flex; justify-content: flex-end; gap: 8px; }
+.nk-dialog__actions .c-btn { min-height: 32px; }
+.c-btn--danger-fill { background: var(--c-red); border-color: var(--c-red); color: #17141f; font-weight: 650; }
+.c-btn--danger-fill:hover { background: color-mix(in srgb, var(--c-red) 85%, #ffffff); border-color: var(--c-red); color: #17141f; }
+
+/* ── Developer details (View → Developer details) ──────────────────── */
+
+[data-dev] { display: none; }
+body.nk-dev [data-dev] { display: block; }
+body.nk-dev span[data-dev],
+body.nk-dev code[data-dev] { display: inline; }
+
+/* ── Responsive: panels give way to the rail below 1000 px ─────────── */
+
+@media (max-width: 1000px) {
+  .nk-body {
+    grid-template-columns: var(--nk-iconrail-w, 44px) minmax(0, 1fr);
+  }
+  .nk-panel {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 40;
+    width: 280px;
+    display: none;
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.55);
+  }
+  .nk-panel--left { left: var(--nk-iconrail-w, 44px); border-right: 1px solid var(--c-line-strong); }
+  .nk-panel--right { right: 0; border-left: 1px solid var(--c-line-strong); }
+  .nk-panel.nk-panel--open { display: flex; }
+}
+
+/* No bounce, no glow, no animated chrome (P6 / §3.1). */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+

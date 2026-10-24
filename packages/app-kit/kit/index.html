@@ -2,16 +2,121 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Nucleus Kit — not an app</title>
+  <title>Nucleus kit — the shared shell, demo</title>
   <link rel="stylesheet" href="/_kit/kit.css" />
+  <link rel="stylesheet" href="/_kit/craft.css" />
+  <style>
+    :root { --nk-app-accent: #8ab4f8; }
+    .demo-canvas { padding: 24px; overflow: auto; }
+    .demo-canvas h1 { margin: 0 0 6px; font-size: 22px; color: var(--c-text-strong); }
+    .demo-canvas p { margin: 0 0 10px; color: var(--c-muted); max-width: 620px; }
+    .demo-cards { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+    .demo-cards figure {
+      margin: 0; padding: 10px; border: 1px solid var(--c-line); background: var(--c-panel); width: 140px;
+    }
+    .demo-cards figcaption { font-size: 11.5px; color: var(--c-muted); margin-top: 6px; }
+    .demo-cards .block { height: 80px; background: var(--c-raised); }
+    .demo-list { padding: 4px 0; }
+  </style>
 </head>
 <body>
-  <main class="nk-demo">
-    <h1>@nucleus/app-kit — kit demo</h1>
-    <p>This page exists so <code>/_kit/*</code> assets are always routable.
-       Apps mount the same files with <code>&lt;script src="/_kit/kit.js"&gt;</code>.</p>
-    <button id="nk-demo-toast">Show a toast</button>
+  <main class="demo-canvas" id="demo-main">
+    <h1>@nucleus/app-kit — shared shell</h1>
+    <p>This page exists so <code>/_kit/*</code> assets are always routable, and so the shell can be
+      exercised by hand: menus (File, Edit, View, Help), the contextual options bar, the icon rail,
+      the properties panel, History, and the command palette on <kbd>Ctrl</kbd>+<kbd>K</kbd>.</p>
+    <p>Select a card, then use the options bar or the Edit menu. <kbd>Del</kbd> asks first.</p>
+    <div class="demo-cards" id="demo-cards"></div>
   </main>
+
   <script src="/_kit/kit.js"></script>
+  <script src="/_kit/shell.js"></script>
+  <script>
+    (function () {
+      const cards = document.getElementById("demo-cards");
+      const state = { selection: [] };
+      for (let i = 1; i <= 4; i += 1) {
+        const figure = document.createElement("figure");
+        figure.dataset.id = "c" + i;
+        figure.innerHTML = '<div class="block"></div><figcaption>Card ' + i + "</figcaption>";
+        figure.addEventListener("click", () => {
+          state.selection = state.selection.includes("c" + i) ? [] : ["c" + i];
+          NucleusShell.setContext({ selection: state.selection }, { panels: false });
+        });
+        cards.appendChild(figure);
+      }
+
+      NucleusShell.mount({
+        app: { name: "Kit demo", accent: "#8ab4f8" },
+        main: "#demo-main",
+        context: { selection: [] },
+        menus: [
+          {
+            label: "File",
+            items: [
+              { id: "file.save", label: "Save project…", shortcut: "Ctrl+S", run: () => NucleusKit.toast("Saved") },
+              { sep: true },
+              {
+                id: "file.reset",
+                label: "Start over…",
+                danger: true,
+                confirm: "Remove everything and start over?",
+                run: () => NucleusKit.toast("Started over"),
+              },
+            ],
+          },
+          {
+            label: "Edit",
+            items: [
+              { id: "edit.duplicate", label: "Duplicate", shortcut: "Ctrl+D", run: () => NucleusKit.toast("Duplicated") },
+              { id: "edit.delete", label: "Delete", shortcut: "Del", danger: true, confirm: "Delete the selection?", run: () => NucleusKit.toast("Deleted") },
+              { id: "edit.clear", label: "Clear selection", shortcut: "Esc", run: () => NucleusShell.setContext({ selection: [] }) },
+            ],
+          },
+          { label: "View", items: NucleusShell.standardViewMenu() },
+          { label: "Help", items: NucleusShell.standardHelpMenu() },
+        ],
+        primary: { id: "file.save" },
+        options: (ctx) =>
+          (ctx.selection || []).length
+            ? { ids: ["edit.duplicate", "edit.delete", "edit.clear"], label: "1 selected" }
+            : { hint: "Click a card to select it." },
+        rail: [
+          { id: "documents", icon: "pages", label: "Documents" },
+          { id: "find", icon: "search", label: "Find" },
+          { id: "history", icon: "history", label: "History" },
+        ],
+        panels: {
+          left: (ctx) => {
+            if (ctx.panel === "history") return null; // the shell renders History
+            const node = document.createElement("div");
+            node.innerHTML = '<div class="c-panelhead">' +
+              (ctx.panel === "find" ? "Find" : "Documents") +
+              '</div><div class="c-rail__body demo-list"><div class="c-section">' +
+              (ctx.panel === "find" ? "Search across 4 cards" : "4 cards") +
+              "</div></div>";
+            return node;
+          },
+          right: () => {
+            const node = document.createElement("div");
+            node.innerHTML = '<div class="c-panelhead">Properties</div>' +
+              '<div class="c-prop"><span class="c-prop__label">Selected</span><span class="c-prop__value">' +
+              (state.selection[0] || "none") + "</span></div>" +
+              '<div class="c-prop"><span class="c-prop__label">Size</span><span class="c-prop__value">140 × 80</span></div>' +
+              '<div data-dev class="c-section">data-dev: developer details only</div>';
+            return node;
+          },
+        },
+        status: {
+          left: (ctx) => "4 cards · " + (ctx.selection || []).length + " selected",
+          right: () => "Ctrl+K commands",
+        },
+        enabled: {
+          "edit.duplicate": (ctx) => (ctx.selection || []).length > 0,
+          "edit.delete": (ctx) => (ctx.selection || []).length > 0,
+        },
+      });
+    })();
+  </script>
 </body>
 </html>
