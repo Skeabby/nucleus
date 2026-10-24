@@ -326,6 +326,40 @@
 > `jargon`), `npm run verify`
 > PASS. The three app frontends migrate in U2–U4; until then the `jargon`/`accent` guards cover the
 > kit, with each app added to `MIGRATED` as it lands.
+>
+> **Update #19 (2026-10-24) — UI pass, part 2 (U2): PDF Workbench moves onto the shell.** The first
+> app actually *consumes* `NucleusShell`, and the shrinking is the point: `public/index.html` goes
+> **145 → 46 lines** and loses its whole hand-written chrome (toolstrip, second canvas bar, sources
+> rail, inspector, status bar), while `app.js` keeps the document model and delegates every frame
+> concern to the shell. Chrome buttons: **35 (25 in HTML + 10 built in JS) → 5**, and 4 of those 5 are
+> the page-preview overlay's own controls (prev/next/rotate/close); the fifth is the empty state's
+> single call to action. The app now has **one** way to add files (File → Add PDFs…, `Ctrl+O`, or a
+> drop), one filled **Export PDF** in the menubar, and no duplicated action. The frame is File (Add PDFs… `Ctrl+O`, Open project…, Save
+> project `Ctrl+S`, Export PDF `Ctrl+E`, Export selected pages `Ctrl+Shift+E`, Start over… →
+> destructive, confirmed, starts a *new* session so it is not undoable) · Edit (Undo/Redo
+> `Ctrl+Z` / `Ctrl+Shift+Z`·`Ctrl+Y`, Select all `Ctrl+A`, Clear selection `Esc`, Preview `Space`,
+> Rotate left/right `Ctrl+Shift+R`/`Ctrl+R`, Duplicate `Ctrl+D`, Remove pages… `Del` → destructive,
+> Reverse order) · View (page size S/M/L with checkmarks, Smaller/Larger `Ctrl+-`/`Ctrl+=`, then the
+> standard History `Ctrl+H` / Developer details / Theme) · Help. The **options bar is contextual and
+> derived**: no selection → a one-line hint + the S/M/L segment; one page → *Preview page* joins the
+> batch actions; two or more → no preview. **`Remove` can never appear there** (danger), and the
+> dock/Properties split is gone: *Documents* lists files with page counts (click = filter the board),
+> *Find* filters by file name or `#position` without rebuilding its panel (the caret survives because
+> the panel is only re-rendered when structure changes), and *Properties* is read-only — position,
+> file page, rotation, size, orientation, with the node id and last command behind *Developer
+> details*. History is the standard panel; a proposed batch from an agent lands in the review card at
+> the top of Properties. Two shell fixes came out of the migration: one action may now answer to
+> **several shortcuts** (`Ctrl+Shift+Z` *and* `Ctrl+Y`, validated for clashes across the whole array),
+> and the shell no longer steals **Space/Enter** from a focused control (`button`, `a[href]`,
+> `role=button|menuitem|tab`, `summary`) — pressing Space on a focused toolbar button must activate
+> it, not open the preview. The kit's palette also stopped printing raw ids: a menu item shows its
+> **menu name** ("File") instead of `file.add`, and the palette takes the keyboard while it is open so
+> `Esc` closes it instead of clearing the selection underneath. Evidence: `npm run verify` PASS
+> (**42/42** tasks, **285** TS tests), `node tools/media.mjs --only pdf` regenerated
+> `docs/media/pdf-workbench.png` from the real app, and a CDP smoke on the real server (8 pages, two
+> files) reports 4 menus, 5 contextual actions on selection, the rail, the History text, a filtered
+> board (2 of 8), a rotate → `90°` → `Ctrl+Z` → `0°` round-trip, **zero console logs, zero
+> exceptions**. Notes and Image Editor keep the old frame until U3/U4.
 
 **Codename:** `nucleus` · monorepo root `nucleus` · packages `@nucleus/*`
 

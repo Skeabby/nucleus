@@ -441,7 +441,8 @@ async function capturePdf(edge) {
   try {
     await seedPdf(app);
     const out = path.join(OUT_DIR, "pdf-workbench.png");
-    // Select one page so the screenshot shows the inspector and batch bar in use.
+    // Select one page so the screenshot shows the contextual options bar and
+    // Properties in use.
     await shoot(edge, app.url, out, {
       settle: 2600,
       evaluate:

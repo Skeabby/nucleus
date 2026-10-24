@@ -267,6 +267,72 @@ describe("@nucleus/app-kit shell — keyboard", () => {
     keydown(document.body, "d", { ctrlKey: true });
     expect(duplicate).toHaveBeenCalledTimes(1);
   });
+
+  it("lets one action answer to several keys (Ctrl+Shift+Z and Ctrl+Y)", () => {
+    const redo = vi.fn();
+    mountShell({}, {
+      menus: [
+        { label: "Edit", items: [{ id: "edit.redo", label: "Redo", shortcut: ["Ctrl+Shift+Z", "Ctrl+Y"], run: redo }] },
+      ],
+      primary: { id: "edit.redo" },
+      options: () => [],
+    });
+    keydown(document.body, "z", { ctrlKey: true, shiftKey: true });
+    keydown(document.body, "y", { ctrlKey: true });
+    expect(redo).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a clash across combined and single shortcuts", () => {
+    expect(() =>
+      mountShell({}, {
+        menus: [
+          {
+            label: "A",
+            items: [
+              { id: "a", label: "A", shortcut: ["Ctrl+Y", "Ctrl+Z"], run: () => {} },
+              { id: "b", label: "B", shortcut: "Ctrl+Z", run: () => {} },
+            ],
+          },
+        ],
+        primary: { id: "a" },
+      }),
+    ).toThrow(/duplicate shortcut/i);
+  });
+
+  it("leaves Space and Enter to a focused control", () => {    const preview = vi.fn();
+    mountShell({}, {
+      menus: [{ label: "View", items: [{ id: "view.preview", label: "Preview", shortcut: "Space", run: preview }] }],
+      primary: { id: "view.preview" },
+      options: () => [],
+    });
+    const button = document.createElement("button");
+    document.body.appendChild(button);
+    keydown(button, " ");
+    expect(preview).not.toHaveBeenCalled();
+    keydown(document.body, " ");
+    expect(preview).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands the keyboard to the command palette while it is open", () => {
+    const clear = vi.fn();
+    mountShell({}, {
+      menus: [{ label: "Edit", items: [{ id: "edit.clear", label: "Clear", shortcut: "Esc", run: clear }] }],
+      primary: { id: "edit.clear" },
+      options: () => [],
+    });
+    const palette = document.createElement("div");
+    palette.id = "nk-palette";
+    palette.className = "nk-visible";
+    document.body.appendChild(palette);
+
+    keydown(document.body, "Escape");
+    expect(clear).not.toHaveBeenCalled();
+
+    palette.classList.remove("nk-visible");
+    keydown(document.body, "Escape");
+    expect(clear).toHaveBeenCalledTimes(1);
+    palette.remove();
+  });
 });
 
 describe("@nucleus/app-kit shell — destructive actions", () => {

@@ -434,6 +434,7 @@
         key: item.id,
         kind: "menu",
         label: item.label,
+        menu: item.menu || "Menu",
         hint: item.shortcut || "",
         section: "Menu",
         item,
@@ -540,7 +541,7 @@
       item.setAttribute("role", "option");
       item.setAttribute("aria-selected", String(i === palette.index));
       item.innerHTML =
-        '<span class="nk-palette__name">' + escapeHtml(entry.kind === "menu" ? entry.key : entry.command.name) + "</span>" +
+        '<span class="nk-palette__name">' + escapeHtml(entry.kind === "menu" ? entry.menu : entry.command.name) + "</span>" +
         '<span class="nk-palette__title">' + escapeHtml(entry.label) + "</span>" +
         '<span class="nk-palette__hint">' + escapeHtml(entry.kind === "menu" ? entry.hint : entry.command.sideEffects) + "</span>";
       item.addEventListener("click", () => palOpen(entry));

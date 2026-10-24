@@ -13,133 +13,34 @@
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
-    <div class="c-app">
-
-      <!-- ── Toolstrip ─────────────────────────────────────────────── -->
-      <header class="c-strip">
-        <div class="c-brand">
-          <span class="c-brand__mark"></span>
-          <span class="c-brand__name">PDF&nbsp;Workbench</span>
-          <span class="c-brand__sub">nucleus</span>
-        </div>
-
-        <span class="c-tsep"></span>
-
-        <div class="c-tgroup">
-          <label class="c-btn c-btn--accent" for="file-input" title="Import PDF files (or drop them anywhere)">+ Add PDFs</label>
-          <input id="file-input" type="file" accept="application/pdf" multiple hidden />
-          <label class="c-btn" for="project-input" title="Open a saved project">Open…</label>
-          <input id="project-input" type="file" accept=".json,application/json" hidden />
-          <button class="c-btn" id="save" title="Download the project (.nucleus.json)">Save…</button>
-          <button class="c-btn" id="reset" title="Start over">Reset</button>
-        </div>
-
-        <span class="c-tsep"></span>
-
-        <div class="c-tgroup">
-          <button class="c-btn c-btn--icon" id="undo" title="Undo (Ctrl+Z)" disabled>↶</button>
-          <button class="c-btn c-btn--icon" id="redo" title="Redo (Ctrl+Shift+Z)" disabled>↷</button>
-        </div>
-
-        <span class="c-tsep"></span>
-
-        <div class="c-tgroup">
-          <button class="c-btn" id="rot-left" title="Rotate selection left (Ctrl+Shift+R)" disabled>↺ 90</button>
-          <button class="c-btn" id="rot-right" title="Rotate selection right (Ctrl+R)" disabled>↻ 90</button>
-          <button class="c-btn" id="duplicate" title="Duplicate selection (Ctrl+D)" disabled>Duplicate</button>
-          <button class="c-btn" id="reverse" title="Reverse the whole document" disabled>Reverse</button>
-          <button class="c-btn c-btn--danger" id="remove" title="Remove selection (Del)" disabled>Remove</button>
-        </div>
-
-        <div class="c-strip__spring"></div>
-
-        <button class="c-btn" id="palette" title="Command palette (Ctrl+K)">⌘K</button>
-        <span class="c-tsep"></span>
-        <button class="c-btn c-btn--accent" id="export-all" title="Download the assembled PDF">Export PDF</button>
-      </header>
-
-      <!-- ── Main: sources · canvas · inspector ────────────────────── -->
-      <div class="c-main">
-
-        <aside class="c-rail">
-          <div class="c-panelhead">
-            <span>Sources</span>
-            <span class="c-chip" id="sources-count">0</span>
-          </div>
-          <div class="c-rail__body" id="sources"></div>
-          <div class="c-rail__foot">
-            <label class="c-btn" for="file-input" style="flex:1; text-align:center">Import…</label>
-            <button class="c-btn c-btn--icon" id="add-rail" title="Add PDFs">＋</button>
-          </div>
-        </aside>
-
-        <main class="c-canvas" id="dropzone">
-          <div id="empty" class="c-empty" style="padding:40px">
-            <div class="c-empty__kick">01 / organize</div>
-            <h1>Your pages, assembled.</h1>
-            <p>Drop PDFs anywhere — then reorder, rotate, duplicate and export, every step reversible in one undo.</p>
-            <p class="c-empty__hint"><kbd>Ctrl</kbd>+<kbd>K</kbd> commands · <kbd>Space</kbd> preview · <kbd>Del</kbd> removes selection · files never leave this machine.</p>
-          </div>
-
-          <div id="canvasbody" style="display:none">
-            <div class="c-canvasbar" id="canvasbar">
-              <span class="c-chip" id="sel-chip">0 selected</span>
-              <button class="c-btn c-btn--icon" id="bar-rot-l" title="Rotate selection left" disabled>↺</button>
-              <button class="c-btn c-btn--icon" id="bar-rot-r" title="Rotate selection right" disabled>↻</button>
-              <button class="c-btn c-btn--icon" id="bar-dup" title="Duplicate selection" disabled>⧉</button>
-              <button class="c-btn c-btn--icon c-btn--danger" id="bar-remove" title="Remove selection" disabled>✕</button>
-              <button class="c-btn c-btn--icon" id="bar-clear" title="Clear selection" disabled>Clear</button>
-              <span class="c-tsep"></span>
-              <button class="c-btn" id="bar-export" title="Export only the selected pages" disabled>Export selection</button>
-              <span class="c-strip__spring"></span>
-              <span class="c-help-inline" id="page-hint"></span>
-              <div class="c-seg c-zoom-seg" id="zoom-seg" title="Card size (Ctrl+- / Ctrl++)">
-                <button data-zoom="s" aria-pressed="false">S</button>
-                <button data-zoom="m" aria-pressed="true">M</button>
-                <button data-zoom="l" aria-pressed="false">L</button>
-              </div>
-            </div>
-            <div id="grid" class="c-cardslist"></div>
-          </div>
-        </main>
-
-        <aside class="c-inspector">
-          <div class="c-panelhead"><span>Inspector</span></div>
-          <div class="c-inspector__body" id="inspector"></div>
-          <div class="c-inspector__foot">
-            <span class="c-chip" id="bus-chip">human</span>
-            <span style="font-size:11px;color:var(--c-faint)">every action is a bus command</span>
-          </div>
-        </aside>
-      </div>
-
-      <!-- ── Status bar ────────────────────────────────────────────── -->
-      <footer class="c-status">
-        <span class="c-dot" id="dot"></span>
-        <span id="status">Ready</span>
-        <span class="c-status__spring"></span>
-        <span id="counter"></span>
-        <span>⌘K commands · Space preview · Ctrl+Z undo</span>
-      </footer>
+    <!-- The workspace is adopted by NucleusShell (menubar, options bar, panels,
+         status bar and shortcuts all live in /_kit/shell.js). -->
+    <div class="w-canvas" id="workspace">
+      <div id="empty"></div>
+      <div class="c-cardslist" id="grid" data-zoom="m" hidden role="listbox" aria-label="Pages" aria-multiselectable="true"></div>
     </div>
 
-    <!-- ── Page preview (Space / double-click) ──────────────────────── -->
+    <input accept="application/pdf,.pdf" id="file-input" multiple type="file" hidden />
+    <input accept="application/json,.json" id="project-input" type="file" hidden />
+
+    <!-- Page preview (Space / double-click) — stays outside the shell's frame. -->
     <div class="p-overlay" id="preview" hidden>
-      <div class="p-sheet" role="dialog" aria-label="Page preview">
+      <div aria-label="Page preview" class="p-sheet" role="dialog">
         <header class="p-sheet__bar">
           <span class="p-sheet__label" id="preview-label"></span>
-          <span class="c-strip__spring"></span>
-          <button class="c-btn c-btn--icon" id="preview-prev" title="Previous page (←)">‹</button>
-          <button class="c-btn c-btn--icon" id="preview-next" title="Next page (→)">›</button>
-          <button class="c-btn c-btn--icon" id="preview-rot" title="Rotate right (Ctrl+R)">↻</button>
-          <button class="c-btn c-btn--icon" id="preview-close" title="Close (Esc)">×</button>
+          <span class="p-sheet__spring"></span>
+          <button class="c-btn c-btn--icon" id="preview-prev" title="Previous page (←)" type="button">‹</button>
+          <button class="c-btn c-btn--icon" id="preview-next" title="Next page (→)" type="button">›</button>
+          <button class="c-btn c-btn--icon" id="preview-rot" title="Rotate right (Ctrl+R)" type="button">↻</button>
+          <button class="c-btn c-btn--icon" id="preview-close" title="Close (Esc)" type="button">×</button>
         </header>
         <div class="p-sheet__body" id="preview-body"></div>
         <footer class="p-sheet__foot" id="preview-foot"></footer>
       </div>
     </div>
 
+    <script src="/_kit/kit.js"></script>
+    <script src="/_kit/shell.js"></script>
     <script type="module" src="/app.js"></script>
-    <script src="/_kit/kit.js" defer></script>
   </body>
 </html>

@@ -1,50 +1,36 @@
-/* PDF Workbench 2.0 — app-specific visuals. The chrome lives in /_kit/craft.css. */
+/* PDF Workbench — app visuals. The chrome (menubar, options bar, panels, status,
+   rail, dialogs) lives in /_kit/craft.css; nothing here recreates a button set. */
 
 /* `hidden` must win over the component display rules below. */
 [hidden] { display: none !important; }
 
-.c-zoom-seg { margin-right: 6px; }
-.c-zoom-seg > button { padding: 5px 8px; font-family: var(--c-mono); font-size: 10px; }
+/* ── Board ──────────────────────────────────────────────────────────── */
 
-.c-help-inline { font-family: var(--c-mono); font-size: 10px; color: var(--c-faint); }
-
-/* Source rows in the rail reuse craft .c-row; add per-source tools */
-.c-row .c-row__count { font-family: var(--c-mono); font-size: 10px; color: var(--c-faint); }
-.c-row[aria-current="true"] { border-left-color: var(--c-cyan, #22d3ee); }
-.c-row__tools { display: none; gap: 3px; margin-left: auto; }
-.c-row:hover .c-row__tools { display: flex; }
-.c-row:hover .c-row__meta { display: none; }
-
-.c-mini {
-  font-family: var(--c-mono);
-  font-size: 10px;
-  line-height: 1;
-  color: var(--c-muted);
-  border: 1px solid var(--c-line);
-  padding: 2px 5px;
-  cursor: pointer;
+.w-canvas {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  padding: 18px 20px;
 }
-.c-mini:hover { color: var(--c-text-strong); border-color: var(--c-line-strong); background: var(--c-panel); }
+.w-canvas.--dragover { outline: 2px dashed var(--c-accent); outline-offset: -8px; }
 
-/* Empty help block inside inspector */
-.c-help { padding: 10px var(--c-rail-pad); }
-.c-help p { margin: 0 0 8px; color: var(--c-muted); font-size: 11.5px; }
-.c-help p b { color: var(--c-text); }
+#empty { flex: 1; min-height: 0; display: flex; }
+#empty > .c-empty { flex: 1; }
 
-/* Inspector action rows */
-.c-actions { display: flex; gap: 6px; padding: 6px 12px; }
-.c-actions .c-btn { flex: 1; font-size: 11px; padding: 4px 6px; }
-
-/* Card thumb sizing */
-.c-cardslist { --thumb-w: 180px; }
+.c-cardslist {
+  --thumb-w: 180px;
+  flex: none;
+  align-content: start;
+}
 .c-cardslist[data-zoom="s"] { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; }
 .c-cardslist[data-zoom="m"] { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 18px; }
 .c-cardslist[data-zoom="l"] { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 22px; }
 
-.card-drag-image { opacity: 0.85; }
-
-/* Page card extras: orientation badge + previewed ring */
+/* Page cards: orientation badge, previewed ring, keyboard focus. */
 .c-card { display: flex; flex-direction: column; }
+.c-card:focus-visible { outline: 2px solid var(--c-accent-ink); outline-offset: 2px; }
 
 /* Fixed portrait frame: portrait pages fill it, landscape pages letterbox, so
    a mixed document keeps a straight baseline instead of a ragged grid. */
@@ -67,18 +53,51 @@
 }
 .c-card.is-previewed { box-shadow: inset 0 0 0 1px var(--c-accent); }
 
-/* Drop feedback when dragging PDF files over the canvas */
-.c-canvas.--dragover {
-  outline: 1px dashed var(--c-accent);
-  outline-offset: -6px;
+/* ── Panels ─────────────────────────────────────────────────────────── */
+
+.w-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.w-props { padding-bottom: 10px; }
+
+.w-find {
+  padding: 10px var(--c-rail-pad);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.w-input {
+  width: 100%;
+  min-height: 32px;
+  padding: 0 8px;
+  background: var(--c-panel);
+  border: 1px solid var(--c-line);
+  color: var(--c-text);
+  font-family: var(--c-sans);
+  font-size: 12.5px;
+}
+.w-input::placeholder { color: var(--c-faint); }
+.w-input:focus-visible {
+  outline: 2px solid var(--c-accent-ink);
+  outline-offset: 1px;
+  border-color: var(--c-accent-ink);
 }
 
-/* Page preview overlay */
+.c-help {
+  margin: 0;
+  padding: 8px var(--c-rail-pad);
+  color: var(--c-muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.w-status { display: inline-flex; align-items: center; gap: 7px; }
+
+/* ── Page preview (Space / double-click) ────────────────────────────── */
+
 .p-overlay {
   position: fixed;
   inset: 0;
   z-index: 60;
-  background: color-mix(in srgb, #0b0912 82%, transparent);
+  background: color-mix(in srgb, var(--c-ink) 82%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -102,6 +121,7 @@
   border-bottom: 1px solid var(--c-line);
   background: var(--c-panel);
 }
+.p-sheet__spring { flex: 1; min-width: 8px; }
 .p-sheet__label {
   font-family: var(--c-mono);
   font-size: 11px;
@@ -116,7 +136,9 @@
   display: grid;
   place-items: center;
   padding: 18px;
-  background: #0e0c15;
+  background: var(--c-ink);
+  color: var(--c-muted);
+  font-size: 12.5px;
 }
 .p-sheet__body canvas { box-shadow: 0 0 0 1px var(--c-line-strong); background: #fff; }
 

@@ -167,6 +167,23 @@
     return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
   }
 
+  /** Space/Enter on a focused control belong to that control, not to the app. */
+  function isInteractiveTarget(target) {
+    if (!(target instanceof HTMLElement)) return false;
+    if (isTypingTarget(target)) return true;
+    return Boolean(target.closest("button, a[href], summary, [role='button'], [role='menuitem'], [role='tab']"));
+  }
+
+  /** One item may answer to several keys; the menu shows the first one. */
+  function shortcutList(item) {
+    if (!item || !item.shortcut) return [];
+    return Array.isArray(item.shortcut) ? item.shortcut : [item.shortcut];
+  }
+
+  function shortcutLabel(item) {
+    return shortcutList(item)[0] || "";
+  }
+
   function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
   }
@@ -183,17 +200,15 @@
         if (!item.id) throw new Error("NucleusShell: a menu item in " + menu.label + " has no id");
         if (items.has(item.id)) throw new Error("NucleusShell: duplicate menu id: " + item.id);
         items.set(item.id, Object.assign({ menu: menu.label }, item));
-        if (item.shortcut) {
-          const combo = normalizeShortcut(item.shortcut);
-          if (!combo) throw new Error("NucleusShell: bad shortcut: " + item.shortcut);
+        for (const text of shortcutList(item)) {
+          const combo = normalizeShortcut(text);
+          if (!combo) throw new Error("NucleusShell: bad shortcut: " + text);
           if (RESERVED_SHORTCUTS.has(combo)) {
-            throw new Error("NucleusShell: " + item.shortcut + " is reserved for the command palette");
+            throw new Error("NucleusShell: " + text + " is reserved for the command palette");
           }
           const owner = shortcuts.get(combo);
           if (owner) {
-            throw new Error(
-              "NucleusShell: duplicate shortcut " + item.shortcut + " (" + owner + " and " + item.id + ")",
-            );
+            throw new Error("NucleusShell: duplicate shortcut " + text + " (" + owner + " and " + item.id + ")");
           }
           shortcuts.set(combo, item.id);
         }
@@ -501,6 +516,8 @@
   function onKeydown(event) {
     const combo = comboFromEvent(event);
     if (!combo) return;
+    // The command palette is its own surface: it owns the keyboard while it is up.
+    if (document.querySelector("#nk-palette.nk-visible")) return;
     if (isDialogOpen()) {
       if (combo === "escape") {
         event.preventDefault();
@@ -517,9 +534,11 @@
     }
     const id = state.shortcuts.get(combo);
     if (!id) return;
-    const typing = isTypingTarget(event.target);
+    const bare = !event.ctrlKey && !event.metaKey && !event.altKey;
     // Bare keys (R, H, Del…) must never fire while the user is typing.
-    if (typing && !event.ctrlKey && !event.metaKey && !event.altKey) return;
+    if (bare && isTypingTarget(event.target)) return;
+    // Space and Enter activate the focused control; the shell must not steal them.
+    if (bare && (combo === " " || combo === "enter") && isInteractiveTarget(event.target)) return;
     if (isDisabled(id)) return;
     event.preventDefault();
     void runItem(id);
@@ -575,7 +594,8 @@
       mark.setAttribute("aria-hidden", "true");
       node.appendChild(mark);
       node.appendChild(el("span", "nk-menu__label", item.label));
-      if (item.shortcut) node.appendChild(el("span", "nk-menu__key", item.shortcut));
+      const keyLabel = shortcutLabel(item);
+      if (keyLabel) node.appendChild(el("span", "nk-menu__key", keyLabel));
 
       node.addEventListener("click", () => void runItem(item.id));
       node.addEventListener("mouseenter", () => node.focus());
@@ -674,7 +694,8 @@
       if (item.danger) node.classList.add("nk-menu__item--danger");
       node.appendChild(el("span", "nk-menu__check"));
       node.appendChild(el("span", "nk-menu__label", item.label));
-      if (item.shortcut) node.appendChild(el("span", "nk-menu__key", item.shortcut));
+      const keyLabel = shortcutLabel(item);
+      if (keyLabel) node.appendChild(el("span", "nk-menu__key", keyLabel));
       node.addEventListener("click", () => void runItem(id));
       popup.appendChild(node);
     }
@@ -806,7 +827,8 @@
       const btn = el("button", "c-btn", item.label);
       btn.type = "button";
       btn.dataset.item = item.id;
-      if (item.shortcut) btn.title = item.label + " (" + item.shortcut + ")";
+      const keyLabel = shortcutLabel(item);
+      if (keyLabel) btn.title = item.label + " (" + keyLabel + ")";
       if (isDisabled(item.id)) btn.disabled = true;
       btn.addEventListener("click", () => void runItem(item.id));
       bar.appendChild(btn);
@@ -1010,11 +1032,12 @@
   function showShortcuts() {
     const list = el("div", "nk-shortcuts");
     for (const item of state.items.values()) {
-      if (!item.shortcut) continue;
+      const keys = shortcutList(item);
+      if (!keys.length) continue;
       const row = el("div", "c-prop");
       row.appendChild(el("span", "c-prop__label", item.label));
       const value = el("span", "c-prop__value");
-      value.appendChild(el("kbd", null, item.shortcut));
+      for (const key of keys) value.appendChild(el("kbd", null, key));
       row.appendChild(value);
       list.appendChild(row);
     }
@@ -1053,7 +1076,8 @@
         [...state.items.values()].map((item) => ({
           id: item.id,
           label: item.label,
-          shortcut: item.shortcut,
+          menu: item.menu,
+          shortcut: shortcutLabel(item) || undefined,
           command: item.command,
           danger: item.danger,
           run: () => runItem(item.id),
