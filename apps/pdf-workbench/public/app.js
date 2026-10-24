@@ -104,7 +104,6 @@ const observer = new IntersectionObserver(
       renderThumb(info.sourceId, info.sourcePage, info.rotation)
         .then((url) => {
           if (url) info.img.src = url;
-          if (info.badge) info.badge.textContent = orientationOf(info.sourceId, info.sourcePage);
         })
         .catch(() => {});
     }
@@ -464,6 +463,7 @@ function renderBoard() {
     card.setAttribute("role", "option");
     card.setAttribute("aria-selected", String(selection.has(page.id)));
     card.setAttribute("aria-label", `Page ${position}, ${nameFor(page.sourceId)} page ${page.sourcePage + 1}`);
+    card.title = `${nameFor(page.sourceId)} — page ${page.sourcePage + 1}`;
     if (page.id === previewId) card.classList.add("is-previewed");
 
     const thumbwrap = document.createElement("div");
@@ -471,17 +471,16 @@ function renderBoard() {
     const img = new Image();
     img.className = "c-card__thumb";
     img.alt = "";
+    // Page number only: the file name and the source page live in Properties
+    // and in the hover title (brief #3, §4.1).
     const no = document.createElement("span");
     no.className = "c-card__no";
-    no.textContent = `#${position} · p${page.sourcePage + 1}`;
+    no.textContent = `#${position}`;
     const rot = document.createElement("span");
     rot.className = "c-card__rot";
     rot.dataset.deg = String(page.rotation);
     rot.textContent = `${page.rotation}°`;
-    const dim = document.createElement("span");
-    dim.className = "c-card__dim";
-    dim.textContent = orientationOf(page.sourceId, page.sourcePage);
-    thumbwrap.append(img, no, rot, dim);
+    thumbwrap.append(img, no, rot);
 
     const key = `${page.sourceId}:${page.sourcePage}:${page.rotation}`;
     if (thumbCache.has(key)) img.src = thumbCache.get(key);
@@ -491,21 +490,11 @@ function renderBoard() {
         sourcePage: page.sourcePage,
         rotation: page.rotation,
         img,
-        badge: dim,
       });
       observer.observe(thumbwrap);
     }
 
-    const meta = document.createElement("div");
-    meta.className = "c-card__meta";
-    const name = document.createElement("span");
-    name.className = "c-card__title";
-    name.textContent = nameFor(page.sourceId);
-    const pos = document.createElement("span");
-    pos.textContent = `#${position}`;
-    meta.append(name, pos);
-
-    card.append(thumbwrap, meta);
+    card.append(thumbwrap);
     frag.appendChild(card);
   });
   grid.replaceChildren(frag);
@@ -755,6 +744,22 @@ async function removeSelection() {
 
 async function reverseDocument() {
   await op("pdf.reverse", {}, "Reverse document");
+}
+
+/** Move the selection one slot earlier (-1) or later (+1), Alt+Left/Right.
+ *  `to` is the insertion index with the moved pages lifted out, exactly like
+ *  the drag-and-drop path, so both routes share one bus command. */
+async function moveSelection(delta) {
+  const ids = [...selection];
+  if (ids.length === 0) return;
+  const moving = new Set(ids);
+  const firstIndex = state.pages.findIndex((page) => moving.has(page.id));
+  if (firstIndex < 0) return;
+  const before = state.pages.slice(0, firstIndex).filter((page) => !moving.has(page.id)).length;
+  const room = state.pages.length - moving.size;
+  const to = Math.max(0, Math.min(room, before + delta));
+  if (to === before) return; // already at the top or the bottom
+  await op("pdf.movePages", { ids, to }, delta < 0 ? "Move earlier" : "Move later");
 }
 
 function selectAll() {
@@ -1071,11 +1076,7 @@ window.NucleusShell.mount({
         { id: "edit.selectAll", label: "Select all pages", shortcut: "Ctrl+A", run: selectAll },
         { id: "edit.clearSelection", label: "Clear selection", shortcut: "Esc", run: clearSelection },
         { sep: true },
-        { id: "edit.preview", label: "Preview page", shortcut: "Space", run: previewAction },
-        { id: "edit.rotateLeft", label: "Rotate left", shortcut: "Ctrl+Shift+R", run: () => void rotateSelection(-90) },
-        { id: "edit.rotateRight", label: "Rotate right", shortcut: "Ctrl+R", run: () => void rotateSelection(90) },
         { id: "edit.duplicate", label: "Duplicate", shortcut: "Ctrl+D", run: () => void duplicateSelection() },
-        { sep: true },
         {
           id: "edit.remove",
           label: "Remove pages…",
@@ -1084,7 +1085,19 @@ window.NucleusShell.mount({
           confirm: "Remove the selected pages? You can undo it with Ctrl+Z.",
           run: () => void removeSelection(),
         },
-        { id: "edit.reverse", label: "Reverse order", run: () => void reverseDocument() },
+      ],
+    },
+    {
+      label: "Page",
+      items: [
+        { id: "page.rotateLeft", label: "Rotate left", shortcut: "Ctrl+Shift+R", run: () => void rotateSelection(-90) },
+        { id: "page.rotateRight", label: "Rotate right", shortcut: "Ctrl+R", run: () => void rotateSelection(90) },
+        { sep: true },
+        { id: "page.moveEarlier", label: "Move earlier", shortcut: "Alt+Left", run: () => void moveSelection(-1) },
+        { id: "page.moveLater", label: "Move later", shortcut: "Alt+Right", run: () => void moveSelection(1) },
+        { id: "page.reverse", label: "Reverse order", run: () => void reverseDocument() },
+        { sep: true },
+        { id: "page.preview", label: "Preview page", shortcut: "Space", run: previewAction },
       ],
     },
     {
@@ -1133,8 +1146,8 @@ window.NucleusShell.mount({
         right: sizes,
       };
     }
-    const ids = ["edit.rotateLeft", "edit.rotateRight", "edit.duplicate", "file.exportSelection"];
-    if (count === 1) ids.unshift("edit.preview");
+    const ids = ["page.rotateLeft", "page.rotateRight", "edit.duplicate", "file.exportSelection"];
+    if (count === 1) ids.unshift("page.preview");
     return { label: plural(count, "page") + " selected", ids, right: sizes };
   },
   rail: [
@@ -1171,12 +1184,14 @@ window.NucleusShell.mount({
     "edit.redo": () => state.canRedo && !busy,
     "edit.selectAll": () => visiblePages().length > 0 && !busy,
     "edit.clearSelection": () => selection.size > 0 || Boolean(previewId),
-    "edit.preview": () => state.pages.length > 0,
-    "edit.rotateLeft": () => selection.size > 0 && !busy,
-    "edit.rotateRight": () => selection.size > 0 && !busy,
     "edit.duplicate": () => selection.size > 0 && !busy,
     "edit.remove": () => selection.size > 0 && !busy,
-    "edit.reverse": () => state.pages.length > 1 && !busy,
+    "page.preview": () => state.pages.length > 0,
+    "page.rotateLeft": () => selection.size > 0 && !busy,
+    "page.rotateRight": () => selection.size > 0 && !busy,
+    "page.moveEarlier": () => selection.size > 0 && !busy,
+    "page.moveLater": () => selection.size > 0 && !busy,
+    "page.reverse": () => state.pages.length > 1 && !busy,
   },
 });
 

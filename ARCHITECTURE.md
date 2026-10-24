@@ -437,7 +437,53 @@
 > restoring 8/16/10/0/18/0/22, `Esc` leaving the crop tool, and the empty state at 0 edits — zero
 > console logs, zero exceptions, zero server stderr.
 
-**Codename:** `nucleus` · monorepo root `nucleus` · packages `@nucleus/*`
+> **Update #22 (2026-10-24) — UI pass, part 5 (U5): the proof, and the chrome that was still lying
+> around.** U5 was not a coat of paint: reading the brief against the shipped screens found three
+> gaps and one dishonest metric. **(a)** PDF Workbench never got the **Page** menu §4.1 asks for —
+> rotation, order and preview had been folded into *Edit*. It now exists: Rotate left
+> `Ctrl+Shift+R`, Rotate right `Ctrl+R`, **Move earlier / Move later** (`Alt+Left` / `Alt+Right` —
+> a new `moveSelection()` that reuses `pdf.movePages` with the same "insertion index with the moved
+> pages lifted out" arithmetic as drag-and-drop, so keyboard and mouse share one undoable command),
+> Reverse order, Preview page `Space`. **(b)** Page cards lost the `PORTRAIT`/`LANDSCAPE` chip, the
+> `#1 · p1` overlay and the `file.pdf #1` footer: an image plus `#n` is the card, the file name and
+> the source page live in Properties *and* in the card's hover title. **(c)** The dead CSS was
+> removed for real — **26 selectors plus two stragglers** in `packages/app-kit/kit/craft.css`
+> (**1028 → 867** lines, −161): the pre-shell toolstrip (`c-strip`, `c-tgroup`, `c-tsep`,
+> `c-brand*`), the old canvas pair (`c-app`, `c-canvas`, `c-canvasbar`), the inspector search strip
+> (`c-search*`, `c-inspector__foot`, `c-rail__foot`), the drag caret, `c-row--actions`,
+> `c-card__meta`, the unused chip/button tones and the `--c-strip-h` token. Each one was proven
+> unreferenced across `apps/*/public`, `kit.js`, `shell.js` and the kit demo before deletion, and the
+> brace count is still balanced (173/173).
+>
+> **Proof, not claims.** `scripts/capture-shots.ps1` is now the single entry point the brief names:
+> the launcher capture moved to `scripts/capture-launcher.ps1`, and the script then refreshes every
+> `docs/media/*` file plus `.github/social-preview.png` through `tools/media.mjs`
+> (`-AppsOnly`, `-LauncherOnly`, `-Only notes|pdf|image|social`). A new
+> `packages/app-kit/test/consistency.test.ts` (**21 tests**) keeps the three apps one product: one
+> `mount()` call each, the menu skeleton **File · Edit · *app* · View · Help** in that order, the
+> primary action is a real menu item, every id used by an options bar or an `enabled` map exists in
+> a menu (the shell only `console.warn`s, and a warning is not a test), `app.js` and `index.html`
+> agree on the accent, and every app names its items with a noun. Two meta-tests keep the reader
+> honest, so the guard cannot silently pass on an empty parse. README alt texts were rewritten to
+> describe what the screenshots actually show (no "inspector", em dashes throughout).
+>
+> **The one criterion the brief asks for that the code does not meet, stated plainly:** "each app's
+> `style.css`/`app.js` smaller than before". `index.html` collapsed everywhere (PDF 128 → 46, Notes
+> 180 → 70, Image 127 → 44) and Notes' CSS shrank (423 → 378), but `style.css` grew for PDF
+> (112 → 139: the page-preview overlay and the Properties rows are new function) and for Image
+> (241 → 265), and `app.js` grew for all three (PDF 900 → 1208, Notes 1199 → 1570, Image 956 →
+> 1349) because the chrome that used to be hand-written markup now lives in the app's *declaration*
+> of menus, options bar and panels — the same trade Update #19–#21 recorded. Deleting real features
+> to hit a line count would be the "coquille" the brief is written against, so the numbers are
+> reported instead of gamed.
+>
+> Evidence: `npm run verify` PASS (**42/42** tasks, **312** TS tests, app-kit **111**, 13 UI
+> guards), `npm run scoreboard` regenerated, all five images refreshed from the real product
+> (`docs/media/notes.png`, `pdf-workbench.png`, `image-editor.png`, `social-preview.png`,
+> `.github/social-preview.png`), and the PDF shot confirms the new Page menu, the five-control
+> contextual bar and page-number-only cards.
+
+
 
 ---
 

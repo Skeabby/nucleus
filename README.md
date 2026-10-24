@@ -18,11 +18,11 @@
 <br />
 <img src="docs/screenshot-table.png" alt="The Nucleus launcher, sortable table view" width="820" />
 <br />
-<img src="docs/media/notes.png" alt="Notes — notebooks, tags, pinned notes and a Markdown editor with live preview" width="820" />
+<img src="docs/media/notes.png" alt="Notes — a notebook filter, the note list and a Markdown editor split with its live preview" width="820" />
 <br />
-<img src="docs/media/pdf-workbench.png" alt="PDF Workbench - page grid with thumbnails, rotation, selection and inspector" width="820" />
+<img src="docs/media/pdf-workbench.png" alt="PDF Workbench — a page grid, the contextual options bar for the selected pages and Properties" width="820" />
 <br />
-<img src="docs/media/image-editor.png" alt="Image Editor - a graded photo with histogram and adjustment sliders" width="820" />
+<img src="docs/media/image-editor.png" alt="Image Editor — a graded photo, the histogram and the adjustment sliders" width="820" />
 
 </div>
 

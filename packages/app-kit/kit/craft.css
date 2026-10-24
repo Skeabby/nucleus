@@ -45,7 +45,6 @@
   --c-cyan: var(--nk-ai);
 
   /* Metrics */
-  --c-strip-h: 46px;
   --c-status-h: 26px;
   --c-rail-w: 264px;
   --c-inspect-w: 288px;
@@ -129,66 +128,6 @@ kbd {
   background: transparent;
 }
 
-/* ── App shell ─────────────────────────────────────────────────────── */
-
-.c-app {
-  display: grid;
-  grid-template-rows: var(--c-strip-h) minmax(0, 1fr) var(--c-status-h);
-  height: 100vh;
-}
-
-/* The shared tape scrubber is fixed to the bottom edge; when it is visible the
-   app gives up that strip so its own status bar is not buried underneath. */
-body:has(#nk-scrubber.nk-visible) .c-app {
-  height: calc(100vh - 46px);
-}
-
-/* Toolstrip: groups separated by hairlines, launcher style */
-.c-strip {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 0 14px;
-  background: var(--c-surface);
-  border-bottom: 1px solid var(--c-line);
-  user-select: none;
-}
-
-.c-brand {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  min-width: 0;
-}
-
-.c-brand__mark {
-  width: 16px;
-  height: 16px;
-  flex: none;
-  background: var(--c-accent);
-  clip-path: polygon(50% 0, 100% 100%, 0 100%); /* our orbit wedge */
-}
-
-.c-brand__name {
-  font-weight: 700;
-  font-size: 13px;
-  color: var(--c-text-strong);
-  letter-spacing: 0.01em;
-}
-
-.c-brand__sub {
-  font-family: var(--c-mono);
-  font-size: 10px;
-  color: var(--c-faint);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  margin-top: 2px;
-}
-
-.c-strip__spring { flex: 1; }
-
-.c-tgroup { display: flex; align-items: center; gap: 6px; }
-.c-tsep { width: 1px; height: 22px; background: var(--c-line); margin: 0 4px; }
 
 /* Buttons: hairline, hard edges, hover invert like the launcher nav links */
 .c-btn {
@@ -210,13 +149,6 @@ body:has(#nk-scrubber.nk-visible) .c-app {
 }
 .c-btn:active:not(:disabled) { background: var(--c-accent); color: var(--c-on-accent); border-color: var(--c-accent); }
 .c-btn:disabled { opacity: 0.4; cursor: default; }
-
-.c-btn--accent {
-  border-color: var(--c-accent);
-  color: var(--c-text-strong);
-  font-weight: 600;
-}
-.c-btn--accent:hover:not(:disabled) { background: color-mix(in srgb, var(--c-accent) 22%, transparent); border-color: var(--c-accent); }
 
 .c-btn--danger { color: var(--c-red); }
 .c-btn--danger:hover:not(:disabled) { border-color: var(--c-red); }
@@ -253,17 +185,6 @@ body:has(#nk-scrubber.nk-visible) .c-app {
   color: var(--c-muted);
   white-space: nowrap;
 }
-.c-chip--accent { border-color: var(--c-accent-ink); color: var(--c-accent-ink); }
-.c-chip--warn { border-color: var(--c-warn); color: var(--c-warn); }
-.c-chip--good { border-color: var(--c-good); color: var(--c-good); }
-
-/* ── Main area: rail · canvas · inspector ──────────────────────────── */
-
-.c-main {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  min-height: 0;
-}
 
 .c-rail, .c-inspector {
   background: var(--c-surface);
@@ -292,14 +213,6 @@ body:has(#nk-scrubber.nk-visible) .c-app {
 .c-panelhead .c-chip { letter-spacing: 0; }
 
 .c-rail__body, .c-inspector__body { overflow: auto; flex: 1; min-height: 0; }
-.c-rail__foot, .c-inspector__foot {
-  border-top: 1px solid var(--c-line);
-  padding: 8px var(--c-rail-pad);
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  flex: none;
-}
 
 /* Rail rows: 1px accent bar when selected, no bounce */
 .c-row {
@@ -343,55 +256,6 @@ body:has(#nk-scrubber.nk-visible) .c-app {
   flex: 1;
 }
 .c-row__time { font-family: var(--c-mono); font-size: 10px; color: var(--c-faint); }
-.c-row--actions { display: flex; align-items: center; gap: 8px; opacity: 0; }
-.c-row:hover .c-row--actions, .c-row[aria-selected="true"] .c-row--actions { opacity: 1; }
-
-/* Rail search strip */
-.c-search {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 8px;
-  border: 1px solid var(--c-line);
-  background: var(--c-ink);
-  padding: 5px 9px;
-  flex: none;
-}
-.c-search input {
-  background: transparent;
-  border: 0;
-  outline: none;
-  width: 100%;
-  color: var(--c-text);
-  font-size: 12px;
-}
-.c-search input::placeholder { color: var(--c-faint); }
-.c-search .c-search__glyph { color: var(--c-faint); font-size: 11px; }
-
-/* ── Canvas ────────────────────────────────────────────────────────── */
-
-.c-canvas {
-  position: relative;
-  min-width: 0;
-  min-height: 0;
-  overflow: auto;
-  background: var(--c-ink);
-  padding: 24px;
-}
-
-.c-canvasbar {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: -24px -24px 16px;
-  padding: 8px 20px;
-  background: color-mix(in srgb, var(--c-ink) 86%, transparent);
-  backdrop-filter: blur(6px);
-  border-bottom: 1px solid var(--c-line);
-}
 
 /* Cards on a table */
 .c-cardslist {
@@ -447,31 +311,6 @@ body:has(#nk-scrubber.nk-visible) .c-app {
   color: var(--c-muted);
 }
 .c-card__rot[data-deg="0"] { display: none; }
-
-.c-card__meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 7px;
-  font-family: var(--c-mono);
-  font-size: 10px;
-  color: var(--c-muted);
-}
-.c-card__meta .c-card__title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-
-/* Drag caret between cards */
-.c-caret {
-  height: 100%;
-  width: 0;
-  border-left: 2px solid var(--c-accent);
-  box-shadow: 0 0 0 6px color-mix(in srgb, var(--c-accent) 18%, transparent);
-}
 
 /* ── Inspector ─────────────────────────────────────────────────────── */
 
