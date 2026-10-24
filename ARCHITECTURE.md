@@ -397,6 +397,46 @@
 > the narrow window (1100 px) dropping to `History` alone with **no overflow** — zero console logs,
 > zero exceptions, zero server stderr.
 
+> **Update #21 (2026-10-24) — UI pass, part 4 (U4): Image Editor moves onto the shell, and the
+> canvas gets the width it deserves.** The third app, and the first with **no library**: its rail
+> picks a *tool*, not a panel, so `public/index.html` drops **146 → 44 lines** (`<button>`:
+> **1 → 0** — only two hidden file inputs remain), `style.css` stays flat at **263 → 265** (the
+> toolstrip, the floating stage bar and the crop bar leave; the tool panel and the zoom cluster
+> arrive) and `app.js` goes **1047 → 1349** because the app now *declares* five menus, the rail and
+> its panels instead of painting 1047 lines of chrome by hand. Gone: the brand strip (Open image,
+> undo/redo, rotate/flip/reset, palette, save, export), the text tool list with numeric badges, the
+> Info panel, the zoom chip / −/+/Fit/Before bar over the picture, the six-button crop bar and the
+> global `keydown` handler. The frame is File (Open image… `Ctrl+O`, Open project…, Save project…
+> `Ctrl+S`, Export PNG `Ctrl+E` — the one filled action) · Edit (Undo `Ctrl+Z`, Redo
+> `Ctrl+Shift+Z` / `Ctrl+Y`, Reset all edits, Image details… `Ctrl+I`) · Image (Rotate left `Shift+R`,
+> Rotate right `R`, Flip horizontal `H`, Flip vertical `V`, Crop… `C`, Resize… `S`, Apply crop,
+> Cancel crop `Esc`, Whole image, Apply size, Half / Double / Natural size, Neutral adjustments) ·
+> View (Zoom in `Ctrl+=`, Zoom out `Ctrl+-`, Fit `Ctrl+0`, **Compare with original** `\` as a checked
+> toggle, then History `Ctrl+H` / Developer details / Theme) · Help. The **options bar follows the
+> active tool**: Adjust → Neutral adjustments, Filter → the composition note, Crop → the aspect
+> segment plus Apply crop / Cancel crop / Whole image, Resize → width × height, a **Linked** toggle
+> and a live "→ 900 × 1400 px" preview next to Apply size. **Zoom moved to the status bar**
+> (`1400×900 · 5 edits  − 85% + Fit`), which is also where the old numeric badges landed; the Info
+> panel became **Image details…** (File, Type, source and output size, rotation, flips, filter, the
+> applied edits, and the document id only behind Developer details). One deviation, stated: History
+> is the rail's fifth entry (the shell's own panel) rather than a list under the sliders — one
+> implementation instead of two, and the right column keeps the active tool while it is open.
+> Slider drags now survive the repaint (`op(..., { panels: false })` while the pointer is down, a
+> full render on release). Shell changes this round, each earned by the brief: **`.nk-body` places
+> its four columns explicitly** — a `display:none` left panel used to slide the canvas into its 0 px
+> column, which is exactly what an app without a library does (test pins the four `grid-column`
+> rules), `dialog()` joins the public API so an app never invents its own read-only modal, and menu
+> toggles expose **`role="menuitemcheckbox"` + `aria-checked`** instead of a glyph hidden from
+> assistive tech. `image-editor` joins `MIGRATED` in the jargon guard (and the empty-state copy lost
+> its "command on the bus"). Evidence: `npm run verify` PASS (**42/42** tasks, **291** TS tests,
+> app-kit **90**), `node tools/media.mjs --only image` regenerated `docs/media/image-editor.png`,
+> and a CDP smoke on the real server (one 1400×900 image, 5 edits) reports 5 menus, 5 rail entries,
+> 14 Image items with their keys, the crop options bar (6 aspects + 3 actions) with the overlay on,
+> the Resize bar reading 900 × 1400, History opening on the left while the right column keeps
+> Resize, the palette listing "Rotate right", the details dialog, Neutral → seven zeros → Undo
+> restoring 8/16/10/0/18/0/22, `Esc` leaving the crop tool, and the empty state at 0 edits — zero
+> console logs, zero exceptions, zero server stderr.
+
 **Codename:** `nucleus` · monorepo root `nucleus` · packages `@nucleus/*`
 
 ---

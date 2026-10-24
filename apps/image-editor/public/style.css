@@ -20,6 +20,13 @@
   background-position: 0 0, 0 11px, 11px -11px, -11px 0;
 }
 
+#empty {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+}
+
 #work {
   position: relative;
   display: grid;
@@ -38,34 +45,6 @@
 }
 
 .i-stage.--dragover #view { outline: 1px dashed var(--c-accent); outline-offset: 8px; }
-
-/* Floating bars over the stage */
-.i-stagebar,
-.i-cropbar {
-  position: absolute;
-  left: 14px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 8px;
-  background: color-mix(in srgb, var(--c-ink) 88%, transparent);
-  border: 1px solid var(--c-line);
-  backdrop-filter: blur(6px);
-}
-.i-stagebar { top: 14px; }
-.i-cropbar {
-  right: 14px;
-  bottom: 14px;
-  left: auto;
-  gap: 8px;
-}
-.i-cropbar__label {
-  font-family: var(--c-mono);
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--c-muted);
-}
 
 /* ── Crop overlay ───────────────────────────────────────────────────────── */
 
@@ -109,66 +88,24 @@
   white-space: nowrap;
 }
 
-/* ── Tool rail ──────────────────────────────────────────────────────────── */
+/* ── Right panel (the active tool) ──────────────────────────────────────── */
 
-.i-tool {
+.i-panel {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 8px var(--c-rail-pad);
-  border: 0;
-  border-left: 2px solid transparent;
-  background: transparent;
-  color: var(--c-text);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.i-tool:hover { background: var(--c-panel); }
-.i-tool[aria-current="true"] {
-  background: color-mix(in srgb, var(--c-accent) 14%, transparent);
-  border-left-color: var(--c-accent);
-}
-.i-tool__glyph {
-  width: 16px;
-  text-align: center;
-  color: var(--c-muted);
-  font-family: var(--c-mono);
-  font-size: 12px;
-}
-.i-tool[aria-current="true"] .i-tool__glyph { color: var(--c-accent); }
-.i-tool__label { font-size: 12px; }
-.i-tool__badge {
-  margin-left: auto;
-  font-family: var(--c-mono);
-  font-size: 9px;
-  color: var(--c-faint);
-  border: 1px solid var(--c-line);
-  padding: 0 4px;
-}
-.i-tool:disabled { opacity: 0.45; cursor: default; }
-
-.c-rail__foot--stack {
   flex-direction: column;
-  align-items: stretch;
-  gap: 6px;
-  padding: 8px var(--c-rail-pad);
-}
-.c-tools__meta {
-  font-family: var(--c-mono);
-  font-size: 9.5px;
-  color: var(--c-faint);
-  line-height: 1.5;
+  min-height: 0;
+  height: 100%;
 }
 
-/* ── Inspector controls ─────────────────────────────────────────────────── */
+.i-panel__body { padding-bottom: 14px; }
+
+/* ── Controls ───────────────────────────────────────────────────────────── */
 
 .i-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 12px;
+  padding: 6px var(--c-rail-pad);
 }
 .i-row__label {
   flex: none;
@@ -199,7 +136,7 @@
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 6px;
-  padding: 6px 12px;
+  padding: 8px var(--c-rail-pad);
 }
 .i-swatch {
   display: flex;
@@ -226,10 +163,23 @@
 .i-swatch[data-filter="cool"] .i-swatch__chip { background: linear-gradient(135deg, #5ec2ff, #2b6cb0); }
 .i-swatch[data-filter="none"] .i-swatch__chip { background: var(--c-surface); border: 1px dashed var(--c-line-strong); }
 
-.i-actions { display: flex; gap: 6px; padding: 8px 12px; }
-.i-actions .c-btn { flex: 1; font-size: 11px; padding: 4px 6px; }
+.i-histogram {
+  display: block;
+  width: calc(100% - 24px);
+  margin: 8px var(--c-rail-pad) 4px;
+  height: 54px;
+  background: var(--c-panel);
+  border: 1px solid var(--c-line);
+}
 
-.i-edits { padding: 4px 12px 10px; display: flex; flex-direction: column; gap: 3px; }
+.i-hint {
+  padding: 2px var(--c-rail-pad) 10px;
+  color: var(--c-faint);
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.i-edits { padding: 4px var(--c-rail-pad) 10px; display: flex; flex-direction: column; gap: 3px; }
 .i-edit {
   display: flex;
   align-items: center;
@@ -246,18 +196,70 @@
   flex: none;
 }
 
-.i-histogram {
-  display: block;
-  width: calc(100% - 24px);
-  margin: 6px 12px 2px;
-  height: 54px;
+/* ── Options bar: output size (Resize tool) ─────────────────────────────── */
+
+.i-sizebar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 10px;
+}
+.i-sizebar__num {
+  width: 74px;
   background: var(--c-panel);
   border: 1px solid var(--c-line);
+  color: var(--c-text);
+  font-family: var(--c-mono);
+  font-size: 11px;
+  padding: 4px 6px;
+}
+.i-sizebar__num:focus { outline: 1px solid var(--c-accent); }
+.i-sizebar__x { color: var(--c-faint); font-size: 11px; }
+.i-sizebar__preview {
+  font-family: var(--c-mono);
+  font-size: 10px;
+  color: var(--c-faint);
+  white-space: nowrap;
 }
 
-.i-hint {
-  padding: 2px 12px 10px;
-  color: var(--c-faint);
+/* ── Status bar ─────────────────────────────────────────────────────────── */
+
+.i-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.i-statusbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.i-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.i-zoom__btn {
+  appearance: none;
+  border: 1px solid var(--c-line);
+  background: transparent;
+  color: var(--c-muted);
+  font-family: var(--c-mono);
+  font-size: 10px;
+  line-height: 1;
+  height: 18px;
+  min-width: 20px;
+  padding: 0 5px;
+  cursor: pointer;
+}
+.i-zoom__btn:hover { color: var(--c-text-strong); border-color: var(--c-line-strong); }
+.i-zoom__btn[aria-pressed="true"] { color: var(--c-accent); border-color: var(--c-accent); }
+.i-zoom__pct {
+  font-family: var(--c-mono);
   font-size: 10.5px;
-  line-height: 1.55;
+  color: var(--c-text);
+  min-width: 38px;
+  text-align: center;
 }

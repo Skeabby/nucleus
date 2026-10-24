@@ -600,6 +600,11 @@
       node.dataset.item = item.id;
       node.setAttribute("role", "menuitem");
       node.setAttribute("tabindex", "-1");
+      // A toggle is a checkbox for assistive tech, not just a ✓ glyph.
+      if (typeof item.checked === "function") {
+        node.setAttribute("role", "menuitemcheckbox");
+        node.setAttribute("aria-checked", String(checking(item)));
+      }
       if (isDisabled(item.id)) node.setAttribute("aria-disabled", "true");
       if (item.danger) node.classList.add("nk-menu__item--danger");
 
@@ -1052,8 +1057,7 @@
   /**
    * One field, one answer. The shell owns the dialog so an app never invents
    * its own modal (Notes → New notebook / Rename notebook).
-   */
-  function askDialog(message, options) {
+   */  function askDialog(message, options) {
     const config = typeof message === "object" && message !== null ? message : Object.assign({ body: message }, options || {});
     return new Promise((resolve) => {
       if (state.dialogResolve) state.dialogResolve(null);
@@ -1322,6 +1326,8 @@
     },
     confirm: (message, options) => confirmDialog(message, options),
     ask: (message, options) => askDialog(message, options),
+    // A read-only dialog for "Details" surfaces (Image Editor → Image details…).
+    dialog: (options) => openDialog(options || {}),
     setDeveloperDetails,
     setTheme,
     setSetting: (key, value) => setSetting(key, value),

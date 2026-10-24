@@ -7,6 +7,8 @@
  * problem this pass exists to remove.
  */
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 type ShellApi = {
   setContext: (patch: Record<string, unknown>, options?: { panels?: boolean }) => void;
@@ -230,6 +232,42 @@ describe("@nucleus/app-kit shell — keyboard", () => {
     keydown(document.activeElement as Element, "Enter");
     expect(save).toHaveBeenCalledTimes(1);
     expect(menu.hidden).toBe(true);
+  });
+
+  it("marks a toggle item as a checked checkbox (View → Compare, theme)", () => {
+    let on = false;
+    mountShell({}, {
+      primary: undefined,
+      menus: [
+        {
+          label: "View",
+          items: [
+            {
+              id: "view.compare",
+              label: "Compare with original",
+              shortcut: "\\",
+              checked: () => on,
+              run: () => {
+                on = !on;
+              },
+            },
+          ],
+        },
+      ],
+    });
+    const trigger = document.querySelector('[data-menu="0"]') as HTMLButtonElement;
+    keydown(trigger, "ArrowDown");
+    let item = document.querySelector('[data-item="view.compare"]') as HTMLElement;
+    expect(item.getAttribute("role")).toBe("menuitemcheckbox");
+    expect(item.getAttribute("aria-checked")).toBe("false");
+
+    keydown(item, "Escape");
+    keydown(trigger, "ArrowDown");
+    item = document.querySelector('[data-item="view.compare"]') as HTMLElement;
+    item.click();
+    keydown(trigger, "ArrowDown");
+    item = document.querySelector('[data-item="view.compare"]') as HTMLElement;
+    expect(item.getAttribute("aria-checked")).toBe("true");
   });
 
   it("closes the menu on Escape and returns focus to its trigger", () => {
@@ -472,6 +510,7 @@ describe("@nucleus/app-kit shell — public API", () => {
       "setDeveloperDetails",
       "confirm",
       "ask",
+      "dialog",
       "emptyState",
       "standardViewMenu",
       "standardHelpMenu",
@@ -495,5 +534,31 @@ describe("@nucleus/app-kit shell — public API", () => {
     vi.advanceTimersByTime(200);
     expect(document.querySelectorAll(".nk-optionsbar .c-btn").length).toBe(0);
     vi.useRealTimers();
+  });
+
+  it("keeps the canvas full-width when an app has no left panel", () => {
+    // Image Editor's tool rail drives the *right* column: there is no library.
+    mountShell({}, {
+      panels: {
+        right: () => {
+          const node = document.createElement("div");
+          node.textContent = "adjustments";
+          return node;
+        },
+      },
+    });
+    const left = document.querySelector<HTMLElement>(".nk-panel--left");
+    expect(left?.hidden).toBe(true);
+    expect(document.querySelector<HTMLElement>(".nk-app")?.style.getPropertyValue("--nk-left-w")).toBe("0px");
+
+    // A display:none panel must not shift the canvas into its 0px column, so
+    // every column is placed explicitly in craft.css.
+    const cssPath = ["kit/craft.css", "packages/app-kit/kit/craft.css"]
+      .map((relative) => join(process.cwd(), relative))
+      .find((candidate) => existsSync(candidate));
+    const css = readFileSync(cssPath as string, "utf8");
+    expect(css).toMatch(/\.nk-main\s*\{[^}]*grid-column:\s*3/);
+    expect(css).toMatch(/\.nk-panel--left\s*\{[^}]*grid-column:\s*2/);
+    expect(css).toMatch(/\.nk-panel--right\s*\{[^}]*grid-column:\s*4/);
   });
 });

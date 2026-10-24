@@ -1,59 +1,88 @@
-// Image Editor — Craft front-end. Every edit goes through /api/op, so the tape,
-// undo and agent proposals see exactly what the human sees.
+// Image Editor — Craft front-end on the shared shell (brief #3 §4.3).
 //
-// The pixels are never rewritten: the command pack stores a crop, a quarter-turn
-// rotation, two flips, a named filter, seven adjustments and an optional output
-// size. This file renders that stack on a canvas — the same function paints the
-// preview and the exported PNG, so what you see is what you get.
+// Every edit goes through /api/op, so the tape, undo and agent proposals see
+// exactly what the human sees. The pixels are never rewritten: the command pack
+// stores a crop, a quarter-turn rotation, two flips, a named filter, seven
+// adjustments and an optional output size. This file renders that stack on a
+// canvas — the same function paints the preview and the exported PNG, so what
+// you see is what you get.
+//
+// The chrome (menubar, tool rail, options bar, panels, status bar, shortcuts,
+// palette, dialogs) belongs to /_kit/shell.js. This file only says *what* the
+// app can do and paints the stage.
 
 const $ = (selector) => document.querySelector(selector);
+
 const canvas = $("#view");
 const stage = $("#stage");
 const emptyEl = $("#empty");
 const workEl = $("#work");
-const statusEl = $("#status");
-const dotEl = $("#dot");
-const counterEl = $("#counter");
-const inspectorEl = $("#inspector");
-const toolsEl = $("#tools");
+const overlay = $("#crop-overlay");
+const cropBox = $("#crop-box");
+const cropSizeEl = $("#crop-size");
 
-const state = { image: null, canUndo: false, canRedo: false };
-const TOOLS = [
-  { id: "adjust", glyph: "◐", label: "Adjust", hint: "Light and colour" },
-  { id: "filter", glyph: "▦", label: "Filter", hint: "Named looks" },
-  { id: "crop", glyph: "⌗", label: "Crop", hint: "Keep a rectangle" },
-  { id: "resize", glyph: "⤢", label: "Resize", hint: "Output size" },
-  { id: "info", glyph: "i", label: "Info", hint: "Source and edits" },
+const TOOL_IDS = ["adjust", "filter", "crop", "resize"];
+const TOOL_META = {
+  adjust: { label: "Adjust", chip: "Light and colour" },
+  filter: { label: "Filter", chip: "Named looks" },
+  crop: { label: "Crop", chip: "Keep a rectangle" },
+  resize: { label: "Resize", chip: "Output size" },
+};
+const FILTERS = ["none", "grayscale", "sepia", "invert", "warm", "cool"];
+// key, label, min, max, step — one row per slider, one command per gesture.
+const ADJUSTMENTS = [
+  ["brightness", "Brightness", -100, 100, 1],
+  ["contrast", "Contrast", -100, 100, 1],
+  ["saturation", "Saturation", -100, 100, 1],
+  ["hue", "Hue", -180, 180, 1],
+  ["temperature", "Temperature", -100, 100, 1],
+  ["blur", "Blur", 0, 50, 0.5],
+  ["vignette", "Vignette", 0, 100, 1],
 ];
 
+const state = { image: null, canUndo: false, canRedo: false, status: { text: "Ready", kind: "" } };
 let sourceImg = null; // HTMLImageElement of the stored source
 let sourceKey = null; // which sourceId sourceImg holds
-let activeTool = "adjust";
+let lastTool = "adjust"; // the right panel keeps this while History is open
 let zoom = "fit"; // "fit" or a numeric scale
-let lastFit = 1;
+let lastScale = 1;
 let showBefore = false;
 let busy = false;
 let cropDraft = null; // { x, y, width, height } in source pixels
 let cropAspect = "free";
 let drag = null; // pointer gesture for the crop overlay
 let sliderTimer = null;
+let resizeLink = true;
 
 // ── plumbing ────────────────────────────────────────────────────────────────
 
+function plural(count, word) {
+  return `${count} ${word}${count === 1 ? "" : "s"}`;
+}
+
+function ready() {
+  return Boolean(state.image) && !busy;
+}
+
+function setStatus(text, kind = "") {
+  state.status = { text, kind };
+  sync({ panels: false });
+}
+
 function setBusy(value) {
   busy = value;
-  dotEl.classList.toggle("c-dot--busy", value);
-  if (value) statusEl.textContent = "Working…";
+  if (value) state.status = { text: "Working…", kind: "busy" };
+  sync({ panels: false });
 }
 
 function markReady(message = "Ready") {
-  dotEl.classList.remove("c-dot--err", "c-dot--busy");
-  statusEl.textContent = message;
+  state.status = { text: message, kind: "" };
+  sync({ panels: false });
 }
 
 function markError(message) {
-  dotEl.classList.add("c-dot--err");
-  statusEl.textContent = message;
+  state.status = { text: message, kind: "error" };
+  sync({ panels: false });
   if (window.NucleusKit?.toast) window.NucleusKit.toast(message, "error");
 }
 
@@ -71,7 +100,6 @@ function settle(payload) {
     markError(`Error: ${payload.error?.message ?? "unknown"}`);
     return false;
   }
-  dotEl.classList.remove("c-dot--err");
   state.image = payload.image ?? null;
   state.canUndo = Boolean(payload.canUndo);
   state.canRedo = Boolean(payload.canRedo);
@@ -80,29 +108,27 @@ function settle(payload) {
 
 /** Run one command, fold the new snapshot in, repaint.
  *  Commands are serialised: a slider's last value must always land, even if the
- *  previous fetch is still in flight. */
+ *  previous fetch is still in flight. `options.panels === false` keeps the right
+ *  panel alive while a slider is being dragged (rebuilding it would drop the
+ *  pointer capture mid-gesture). */
 let commandChain = Promise.resolve();
 
-function op(name, params, label) {
-  commandChain = commandChain.then(() => runCommand(name, params, label)).catch(() => null);
+function op(name, params, label, options) {
+  commandChain = commandChain.then(() => runCommand(name, params, label, options)).catch(() => null);
   return commandChain;
 }
 
-async function runCommand(name, params, label) {
+async function runCommand(name, params, label, options) {
   setBusy(true);
   try {
     const payload = await post("/api/op", { name, params, label });
     const ok = settle(payload);
-    if (ok) {
-      const chip = $("#bus-chip");
-      if (chip) chip.textContent = label ?? name;
-      markReady(`${label ?? name} — done`);
-    }
+    if (ok) markReady(`${label ?? name} — done`);
     return ok ? (payload.result?.result ?? payload.result ?? {}) : null;
   } finally {
     setBusy(false);
     await ensureSource();
-    render();
+    render(options);
   }
 }
 
@@ -201,7 +227,7 @@ async function openFile(file) {
     );
     sourceImg = img;
     sourceKey = uploaded.sourceId;
-    activeTool = "adjust";
+    setTool("adjust");
     zoom = "fit";
     cropDraft = null;
     markReady(`${file.name} — ${img.naturalWidth}×${img.naturalHeight}`);
@@ -240,6 +266,34 @@ async function exportPng() {
     markError(`Export failed: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
     setBusy(false);
+  }
+}
+
+function saveProject() {
+  if (!state.image) return markError("Nothing to save yet.");
+  const link = document.createElement("a");
+  link.href = "/api/project";
+  link.download = "image.nucleus.json";
+  link.click();
+  markReady("Project downloaded.");
+}
+
+async function openProject(file) {
+  if (!file) return;
+  setBusy(true);
+  try {
+    const payload = JSON.parse(await file.text());
+    const restored = await post("/api/project", payload);
+    if (settle(restored)) markReady(`Opened ${file.name}.`);
+    sourceImg = null;
+    sourceKey = null;
+    await ensureSource();
+    setTool("adjust");
+  } catch (error) {
+    markError(`Open failed: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    setBusy(false);
+    render();
   }
 }
 
@@ -333,80 +387,45 @@ function stageSpace() {
   };
 }
 
-function currentScale(view) {
-  const space = stageSpace();
-  if (zoom === "fit") return Math.min(space.width / view.width, space.height / view.height, 4);
-  return zoom;
+function draftOf(view) {
+  return view.crop
+    ? { x: view.crop.x, y: view.crop.y, width: view.crop.width, height: view.crop.height }
+    : { x: 0, y: 0, width: view.naturalWidth, height: view.naturalHeight };
 }
 
-function render() {
-  renderToolbar();
-  renderTools();
-  renderInspector();
+// ── rendering ───────────────────────────────────────────────────────────────
+
+/** Repaint the stage, then let the shell re-read the options bar and panels. */
+function render(options) {
   renderStage();
-  renderStatus();
+  sync(options);
 }
 
-function renderToolbar() {
-  const has = Boolean(state.image);
-  $("#undo").disabled = !state.canUndo || busy;
-  $("#redo").disabled = !state.canRedo || busy;
-  for (const id of ["#rot-left", "#rot-right", "#flip-h", "#flip-v", "#reset", "#export", "#rail-reset"]) {
-    $(id).disabled = !has || busy;
-  }
-}
-
-function renderTools() {
-  const view = state.image;
-  const counts = {
-    adjust: Object.values(view?.adjustments ?? {}).filter((value) => value !== 0).length,
-    filter: view && view.filter !== "none" ? 1 : 0,
-    crop: view?.crop ? 1 : 0,
-    resize: view?.resize ? 1 : 0,
-    info: view?.edits.length ?? 0,
-  };
-  toolsEl.innerHTML = TOOLS.map((tool) => {
-    const badge = counts[tool.id] ?? 0;
-    return (
-      `<button class="i-tool" data-tool="${tool.id}" aria-current="${activeTool === tool.id}" ${view ? "" : "disabled"}>` +
-      `<span class="i-tool__glyph">${tool.glyph}</span>` +
-      `<span class="i-tool__label">${tool.label}</span>` +
-      (badge > 0 ? `<span class="i-tool__badge">${badge}</span>` : "") +
-      `</button>`
-    );
-  }).join("");
-  $("#edits-count").textContent = String(view?.edits.length ?? 0);
-  $("#rail-meta").textContent = view
-    ? `${view.naturalWidth}×${view.naturalHeight} source\n${view.width}×${view.height} output\n${view.mime}`
-    : "No image";
-  $("#rail-meta").style.whiteSpace = "pre-line";
+function sync(options) {
+  if (window.NucleusShell) window.NucleusShell.setContext({}, options);
 }
 
 function renderStage() {
   const view = state.image;
   const has = Boolean(view);
-  emptyEl.style.display = has ? "none" : "";
+  emptyEl.hidden = has;
   workEl.hidden = !has;
-  $("#cropbar").hidden = !has || activeTool !== "crop";
-  $("#crop-overlay").hidden = !has || activeTool !== "crop";
+  overlay.hidden = !has || lastTool !== "crop";
   if (!has) {
     canvas.width = 0;
     canvas.height = 0;
+    lastScale = 1;
     return;
   }
 
   // Cropping shows the unturned source so the rectangle maps 1:1 to pixels.
-  const cropMode = activeTool === "crop";
-  if (cropMode && !cropDraft) {
-    cropDraft = view.crop ?? { x: 0, y: 0, width: view.naturalWidth, height: view.naturalHeight };
-  }
+  const cropMode = lastTool === "crop";
+  if (cropMode && !cropDraft) cropDraft = draftOf(view);
   const baseWidth = cropMode ? view.naturalWidth : view.width;
   const baseHeight = cropMode ? view.naturalHeight : view.height;
   const space = stageSpace();
   const scale =
-    zoom === "fit"
-      ? Math.min(space.width / baseWidth, space.height / baseHeight, 4)
-      : zoom;
+    zoom === "fit" ? Math.min(space.width / baseWidth, space.height / baseHeight, 4) : zoom;
   const displayWidth = Math.max(1, Math.round(baseWidth * scale));
   const displayHeight = Math.max(1, Math.round(baseHeight * scale));
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -426,7 +445,14 @@ function renderStage() {
     // a pixel, but without the crop or the turn — the rectangle is in source space.
     paint(
       ctx,
-      { ...view, crop: null, rotation: 0, resize: null, width: cropMode ? view.naturalWidth : view.width, height: cropMode ? view.naturalHeight : view.height },
+      {
+        ...view,
+        crop: null,
+        rotation: 0,
+        resize: null,
+        width: view.naturalWidth,
+        height: view.naturalHeight,
+      },
       sourceImg,
       displayWidth,
       displayHeight,
@@ -437,145 +463,250 @@ function renderStage() {
     paint(ctx, view, sourceImg, displayWidth, displayHeight, scale, showBefore);
   }
 
+  lastScale = scale;
   if (cropMode) positionCropBox(scale);
-  lastFit = scale;
-  $("#zoom-chip").textContent = `${Math.round(scale * 100)}%`;
 }
 
 function positionCropBox(scale) {
   const view = state.image;
-  if (!view) return;
+  if (!view || !cropBox) return;
   const rect = canvas.getBoundingClientRect();
-  const host = $("#work").getBoundingClientRect();
+  const host = workEl.getBoundingClientRect();
   const offsetX = rect.left - host.left;
   const offsetY = rect.top - host.top;
-  const draft = cropDraft ?? { x: 0, y: 0, width: view.naturalWidth, height: view.naturalHeight };
-  const box = $("#crop-box");
-  box.style.left = `${offsetX + draft.x * scale}px`;
-  box.style.top = `${offsetY + draft.y * scale}px`;
-  box.style.width = `${draft.width * scale}px`;
-  box.style.height = `${draft.height * scale}px`;
-  $("#crop-size").textContent = `${Math.round(draft.width)} × ${Math.round(draft.height)} px`;
+  const draft = cropDraft ?? draftOf(view);
+  cropBox.style.left = `${offsetX + draft.x * scale}px`;
+  cropBox.style.top = `${offsetY + draft.y * scale}px`;
+  cropBox.style.width = `${draft.width * scale}px`;
+  cropBox.style.height = `${draft.height * scale}px`;
+  if (cropSizeEl) cropSizeEl.textContent = `${Math.round(draft.width)} × ${Math.round(draft.height)} px`;
 }
 
-function renderStatus() {
-  const view = state.image;
-  if (!view) {
-    counterEl.textContent = "no image";
-    return;
-  }
-  const edits = view.edits.length;
-  counterEl.textContent =
-    `${view.width}×${view.height} · ${edits} edit${edits === 1 ? "" : "s"} · ` +
-    `${zoom === "fit" ? "fit" : `${Math.round(currentScale(view) * 100)}%`}`;
+function setZoom(value) {
+  zoom = Math.max(0.05, Math.min(8, value));
+  render();
 }
 
-// ── inspector ───────────────────────────────────────────────────────────────
-
-function sliderRow(key, label, min, max, step, value) {
-  return (
-    `<div class="i-row" data-slider="${key}">` +
-    `<span class="i-row__label">${label}</span>` +
-    `<input type="range" min="${min}" max="${max}" step="${step}" value="${value}" data-key="${key}" />` +
-    `<output data-out="${key}">${value}</output>` +
-    `</div>`
-  );
+function zoomFit() {
+  zoom = "fit";
+  render();
 }
 
-function renderInspector() {
-  const view = state.image;
-  const title = $("#inspector-title");
-  const chip = $("#inspector-chip");
-  const tool = TOOLS.find((entry) => entry.id === activeTool) ?? TOOLS[0];
+// ── panels ──────────────────────────────────────────────────────────────────
 
-  if (!view) {
-    title.textContent = "Inspector";
-    chip.textContent = "—";
-    inspectorEl.innerHTML =
-      '<div class="i-hint" style="padding-top:14px">Open an image to start. Drop a file on the canvas, paste one with Ctrl+V, or press "+ Open image".</div>';
-    return;
+/** The tool lives in ctx.panel (the rail). History is the one panel that is
+ *  not a tool, so the right column keeps painting the last tool. */
+function toolOf(ctx) {
+  const panel = ctx && typeof ctx.panel === "string" ? ctx.panel : "";
+  const tool = TOOL_IDS.includes(panel) ? panel : lastTool;
+  if (tool !== lastTool) {
+    lastTool = tool;
+    if (tool === "crop" && state.image) cropDraft = draftOf(state.image);
+    // The rail switches tools through the shell, so the stage catches up here.
+    queueMicrotask(() => renderStage());
   }
+  return tool;
+}
 
-  title.textContent = tool.label;
-  chip.textContent = tool.hint;
+function setTool(id) {
+  lastTool = id;
+  if (id === "crop" && state.image) cropDraft = draftOf(state.image);
+  if (window.NucleusShell) window.NucleusShell.openPanel(id);
+  render();
+}
 
-  if (activeTool === "adjust") {
-    const a = view.adjustments;
-    inspectorEl.innerHTML =
-      `<canvas class="i-histogram" id="histogram" width="256" height="54"></canvas>` +
-      sliderRow("brightness", "Brightness", -100, 100, 1, a.brightness) +
-      sliderRow("contrast", "Contrast", -100, 100, 1, a.contrast) +
-      sliderRow("saturation", "Saturation", -100, 100, 1, a.saturation) +
-      sliderRow("hue", "Hue", -180, 180, 1, a.hue) +
-      sliderRow("temperature", "Temperature", -100, 100, 1, a.temperature) +
-      sliderRow("blur", "Blur", 0, 50, 0.5, a.blur) +
-      sliderRow("vignette", "Vignette", 0, 100, 1, a.vignette) +
-      '<div class="i-actions"><button class="c-btn" data-act="reset-adjust">Neutral</button></div>' +
-      '<div class="i-hint">A slider drag collapses into one undo step. Double-click a slider to reset just that value.</div>';
-    drawHistogram();
-  } else if (activeTool === "filter") {
-    inspectorEl.innerHTML =
-      '<div class="i-swatches">' +
-      ["none", "grayscale", "sepia", "invert", "warm", "cool"]
-        .map(
-          (filter) =>
-            `<button class="i-swatch" data-filter="${filter}" aria-pressed="${view.filter === filter}">` +
-            `<span class="i-swatch__chip"></span>${filter}</button>`,
-        )
-        .join("") +
-      "</div>" +
-      `<div class="i-hint">Warm and cool also move the temperature slider — the two add up. Filters are independent of adjustments, so they compose.</div>`;
-  } else if (activeTool === "crop") {
-    const draft = cropDraft ?? view.crop ?? { x: 0, y: 0, width: view.naturalWidth, height: view.naturalHeight };
-    inspectorEl.innerHTML =
-      `<div class="i-row"><span class="i-row__label">X</span><input type="number" data-crop="x" value="${Math.round(draft.x)}" min="0" max="${view.naturalWidth - 1}" /></div>` +
-      `<div class="i-row"><span class="i-row__label">Y</span><input type="number" data-crop="y" value="${Math.round(draft.y)}" min="0" max="${view.naturalHeight - 1}" /></div>` +
-      `<div class="i-row"><span class="i-row__label">Width</span><input type="number" data-crop="width" value="${Math.round(draft.width)}" min="1" max="${view.naturalWidth}" /></div>` +
-      `<div class="i-row"><span class="i-row__label">Height</span><input type="number" data-crop="height" value="${Math.round(draft.height)}" min="1" max="${view.naturalHeight}" /></div>` +
-      '<div class="c-section">Aspect</div>' +
-      '<div class="i-swatches" style="grid-template-columns: repeat(3, 1fr)">' +
-      ["free", "1:1", "4:3", "3:2", "16:9", "9:16"]
-        .map(
-          (aspect) =>
-            `<button class="i-swatch" data-crop-aspect="${aspect}" aria-pressed="${cropAspect === aspect}">` +
-            `<span class="i-swatch__chip" style="height:14px"></span>${aspect}</button>`,
-        )
-        .join("") +
-      "</div>" +
-      '<div class="i-actions"><button class="c-btn" data-act="crop-reset">Whole image</button><button class="c-btn c-btn--accent" data-act="crop-apply">Apply crop</button></div>' +
-      '<div class="i-hint">Drag on the picture to draw a rectangle, drag inside to move it, grab a corner to resize. Cropping works on the unturned source, so a crop and a rotation never fight.</div>';
-  } else if (activeTool === "resize") {
-    inspectorEl.innerHTML =
-      `<div class="i-row"><span class="i-row__label">Width</span><input type="number" data-size="width" value="${view.width}" min="1" /></div>` +
-      `<div class="i-row"><span class="i-row__label">Height</span><input type="number" data-size="height" value="${view.height}" min="1" /></div>` +
-      '<div class="i-actions"><button class="c-btn" data-act="size-half">50%</button><button class="c-btn" data-act="size-double">2×</button><button class="c-btn" data-act="size-reset">Natural</button></div>' +
-      '<div class="i-actions"><button class="c-btn c-btn--accent" data-act="size-apply">Apply size</button></div>' +
-      `<div class="i-hint">The current output is ${view.width}×${view.height}. Leaving one side empty keeps the aspect ratio. Resizing only changes the exported pixels — the preview scales to fit.</div>`;
-  } else {
-    inspectorEl.innerHTML =
-      '<div class="c-section">Source</div>' +
-      propRow("File", escapeHtml(view.name)) +
-      propRow("Type", escapeHtml(view.mime)) +
-      propRow("Source size", `${view.naturalWidth} × ${view.naturalHeight}`) +
-      propRow("Output", `${view.width} × ${view.height}`) +
-      propRow("Rotation", `${view.rotation}°`) +
-      propRow("Flips", `${view.flipX ? "H " : ""}${view.flipY ? "V" : ""}`.trim() || "none") +
-      propRow("Filter", escapeHtml(view.filter)) +
-      propRow("Node", `<code>${escapeHtml(view.id)}</code>`) +
-      '<div class="c-section">Applied edits</div>' +
-      (view.edits.length === 0
-        ? '<div class="i-hint">Nothing yet — the source is untouched.</div>'
-        : `<div class="i-edits">${view.edits.map((edit) => `<span class="i-edit">${escapeHtml(edit)}</span>`).join("")}</div>`) +
-      '<div class="i-hint">Every line above is a command on the bus: an agent can add or remove any of them and the canvas follows.</div>';
-  }
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function panelHead(title, chip) {
+  const head = el("div", "c-panelhead");
+  head.appendChild(el("span", null, title));
+  if (chip) head.appendChild(el("span", "c-chip", chip));
+  return head;
+}
+
+function section(text) {
+  return el("div", "c-section", text);
+}
+
+function hint(text) {
+  return el("div", "i-hint", text);
 }
 
 function propRow(label, value) {
-  return `<div class="c-prop"><span class="c-prop__label">${escapeHtml(label)}</span><span class="c-prop__value">${value}</span></div>`;
+  const row = el("div", "c-prop");
+  row.appendChild(el("span", "c-prop__label", label));
+  row.appendChild(el("span", "c-prop__value", value));
+  return row;
 }
 
-function drawHistogram() {
-  const target = $("#histogram");
+function inspectorPanel(ctx) {
+  const tool = toolOf(ctx);
+  const view = state.image;
+  const meta = TOOL_META[tool] ?? TOOL_META.adjust;
+
+  const wrap = el("div", "i-panel");
+  wrap.appendChild(panelHead(meta.label, meta.chip));
+
+  const body = el("div", "c-inspector__body i-panel__body");
+  wrap.appendChild(body);
+
+  if (!view) {
+    body.appendChild(
+      hint("Open an image to see its controls. Drop one on the canvas, paste with Ctrl V, or use File → Open image."),
+    );
+    return wrap;
+  }
+
+  if (tool === "adjust") {
+    body.appendChild(adjustBody(view));
+  } else if (tool === "filter") {
+    body.appendChild(filterBody(view));
+  } else if (tool === "crop") {
+    body.appendChild(cropBody(view));
+  } else {
+    body.appendChild(resizeBody(view));
+  }
+
+  wirePanel(body);
+  return wrap;
+}
+
+function sliderRow(key, label, min, max, step, value) {
+  const row = el("div", "i-row");
+  row.dataset.slider = key;
+  row.appendChild(el("span", "i-row__label", label));
+  const input = el("input");
+  input.type = "range";
+  input.min = String(min);
+  input.max = String(max);
+  input.step = String(step);
+  input.value = String(value);
+  input.dataset.key = key;
+  const out = el("output", null, String(value));
+  out.dataset.out = key;
+  row.append(input, out);
+  return row;
+}
+
+function numberRow(label, dataset, key, value, min, max) {
+  const row = el("div", "i-row");
+  row.appendChild(el("span", "i-row__label", label));
+  const input = el("input");
+  input.type = "number";
+  input.min = String(min);
+  input.max = String(max);
+  input.value = String(Math.round(value));
+  input.dataset[dataset] = key;
+  row.appendChild(input);
+  return row;
+}
+
+function adjustBody(view) {
+  const frag = document.createDocumentFragment();
+  const hist = el("canvas", "i-histogram");
+  hist.width = 256;
+  hist.height = 54;
+  frag.appendChild(hist);
+  const a = view.adjustments;
+  for (const [key, label, min, max, step] of ADJUSTMENTS) {
+    frag.appendChild(sliderRow(key, label, min, max, step, a[key] ?? 0));
+  }
+  frag.appendChild(hint("One gesture is one undo step. Double-click a slider to reset just that value."));
+  drawHistogram(hist);
+  return frag;
+}
+
+function filterBody(view) {
+  const frag = document.createDocumentFragment();
+  const grid = el("div", "i-swatches");
+  for (const name of FILTERS) {
+    const button = el("button", "i-swatch");
+    button.type = "button";
+    button.dataset.filter = name;
+    button.setAttribute("aria-pressed", String(view.filter === name));
+    button.appendChild(el("span", "i-swatch__chip"));
+    button.appendChild(document.createTextNode(name));
+    grid.appendChild(button);
+  }
+  frag.appendChild(grid);
+  frag.appendChild(
+    hint("Warm and cool also move the temperature slider — the two add up. Filters are independent of the adjustments, so they compose."),
+  );
+  return frag;
+}
+
+function cropBody(view) {
+  const frag = document.createDocumentFragment();
+  const draft = cropDraft ?? draftOf(view);
+  frag.appendChild(numberRow("X", "crop", "x", draft.x, 0, view.naturalWidth - 1));
+  frag.appendChild(numberRow("Y", "crop", "y", draft.y, 0, view.naturalHeight - 1));
+  frag.appendChild(numberRow("Width", "crop", "width", draft.width, 1, view.naturalWidth));
+  frag.appendChild(numberRow("Height", "crop", "height", draft.height, 1, view.naturalHeight));
+  frag.appendChild(hint("Drag on the picture to draw a rectangle, drag inside to move it, grab a corner to resize. Cropping works on the unturned source, so a crop and a rotation never fight."));
+  return frag;
+}
+
+function resizeBody(view) {
+  const frag = document.createDocumentFragment();
+  frag.appendChild(section("Output"));
+  frag.appendChild(propRow("Source", `${view.naturalWidth} × ${view.naturalHeight}`));
+  frag.appendChild(propRow("Exported", `${view.width} × ${view.height}`));
+  frag.appendChild(propRow("Scale", `${Math.round((view.width / view.naturalWidth) * 100)}%`));
+  frag.appendChild(
+    hint("Width and height live in the options bar. Resizing only changes the exported pixels — the preview scales to fit."),
+  );
+  return frag;
+}
+
+/** One listener set per panel build: the panel is replaced, never mutated. */
+function wirePanel(body) {
+  body.addEventListener("input", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) return;
+
+    if (target.dataset.key) {
+      const key = target.dataset.key;
+      const out = body.querySelector(`[data-out="${key}"]`);
+      if (out) out.textContent = target.value;
+      // The pack coalesces a burst on the same key into one undo step, so we can
+      // stream while the slider moves without flooding the tape.
+      clearTimeout(sliderTimer);
+      sliderTimer = setTimeout(() => {
+        void op("image.adjust", { [key]: Number(target.value) }, `Adjust ${key}`, { panels: false });
+      }, 45);
+    } else if (target.dataset.crop && state.image) {
+      cropDraft = { ...(cropDraft ?? draftOf(state.image)), [target.dataset.crop]: Math.max(0, Number(target.value)) };
+      renderStage();
+    }
+  });
+
+  body.addEventListener("change", (event) => {
+    const target = event.target;
+    if (target instanceof HTMLInputElement && target.dataset.key) {
+      clearTimeout(sliderTimer);
+      void op("image.adjust", { [target.dataset.key]: Number(target.value) }, `Adjust ${target.dataset.key}`);
+    }
+  });
+
+  body.addEventListener("dblclick", (event) => {
+    const row = event.target instanceof HTMLElement ? event.target.closest("[data-slider]") : null;
+    if (!row) return;
+    void op("image.adjust", { [row.dataset.slider]: 0 }, `Reset ${row.dataset.slider}`);
+  });
+
+  body.addEventListener("click", (event) => {
+    const target = event.target instanceof HTMLElement ? event.target.closest("[data-filter]") : null;
+    if (!target) return;
+    void op("image.setFilter", { filter: target.dataset.filter }, `Filter ${target.dataset.filter}`);
+  });
+}
+
+function drawHistogram(target) {
   const view = state.image;
   if (!target || !view || !sourceImg) return;
   const sample = document.createElement("canvas");
@@ -624,111 +755,119 @@ function drawHistogram() {
   });
 }
 
-// ── interactions ────────────────────────────────────────────────────────────
+// ── options bar controls (stable nodes: the bar re-renders often) ───────────
 
-toolsEl.addEventListener("click", (event) => {
-  const button = event.target instanceof HTMLElement ? event.target.closest("[data-tool]") : null;
-  if (!button || !state.image) return;
-  activeTool = button.dataset.tool;
-  if (activeTool === "crop") cropDraft = state.image.crop ?? null;
-  render();
-});
-
-inspectorEl.addEventListener("input", (event) => {
-  const target = event.target;
-  if (!(target instanceof HTMLInputElement)) return;
-
-  if (target.dataset.key) {
-    const key = target.dataset.key;
-    const value = Number(target.value);
-    const out = inspectorEl.querySelector(`[data-out="${key}"]`);
-    if (out) out.textContent = String(value);
-    // The pack coalesces a burst on the same key into one undo step, so we can
-    // stream while the slider moves without flooding the tape.
-    clearTimeout(sliderTimer);
-    sliderTimer = setTimeout(() => {
-      void op("image.adjust", { [key]: value }, `Adjust ${key}`);
-    }, 45);
-  } else if (target.dataset.crop && cropDraft) {
-    cropDraft = { ...cropDraft, [target.dataset.crop]: Math.max(0, Number(target.value)) };
-    renderStage();
-  }
-});
-
-inspectorEl.addEventListener("change", (event) => {
-  const target = event.target;
-  if (target instanceof HTMLInputElement && target.dataset.key) {
-    clearTimeout(sliderTimer);
-    void op("image.adjust", { [target.dataset.key]: Number(target.value) }, `Adjust ${target.dataset.key}`);
-  }
-});
-
-inspectorEl.addEventListener("dblclick", (event) => {
-  const row = event.target instanceof HTMLElement ? event.target.closest("[data-slider]") : null;
-  if (!row) return;
-  const key = row.dataset.slider;
-  void op("image.adjust", { [key]: 0 }, `Reset ${key}`);
-});
-
-inspectorEl.addEventListener("click", (event) => {
-  const target = event.target instanceof HTMLElement ? event.target : null;
-  if (!target) return;
-
-  const filter = target.closest("[data-filter]");
-  if (filter) {
-    void op("image.setFilter", { filter: filter.dataset.filter }, `Filter ${filter.dataset.filter}`);
-    return;
-  }
-
-  const aspect = target.closest("[data-crop-aspect]");
-  if (aspect) {
-    cropAspect = aspect.dataset.cropAspect;
-    renderInspector();
-    return;
-  }
-
-  const action = target.closest("[data-act]")?.dataset.act;
-  if (!action) return;
-  const view = state.image;
-  if (!view) return;
-
-  switch (action) {
-    case "reset-adjust":
-      void op(
-        "image.adjust",
-        { brightness: 0, contrast: 0, saturation: 0, hue: 0, temperature: 0, blur: 0, vignette: 0 },
-        "Neutral adjustments",
-      );
-      break;
-    case "crop-apply":
-      void applyCrop();
-      break;
-    case "crop-reset":
-      cropDraft = null;
-      void op("image.clearCrop", {}, "Reset crop");
-      break;
-    case "size-apply": {
-      const width = Number(inspectorEl.querySelector('[data-size="width"]')?.value ?? 0);
-      const height = Number(inspectorEl.querySelector('[data-size="height"]')?.value ?? 0);
-      if (width < 1 || height < 1) return markError("Width and height must be positive.");
-      void op("image.resize", { width, height }, `Resize ${width}×${height}`);
-      break;
+const aspectBar = el("div", "c-seg");
+aspectBar.setAttribute("role", "group");
+aspectBar.setAttribute("aria-label", "Aspect ratio");
+for (const aspect of ["free", "1:1", "4:3", "3:2", "16:9", "9:16"]) {
+  const button = el("button", null, aspect);
+  button.type = "button";
+  button.dataset.aspect = aspect;
+  button.setAttribute("aria-pressed", String(cropAspect === aspect));
+  button.addEventListener("click", () => {
+    cropAspect = aspect;
+    for (const other of aspectBar.children) {
+      other.setAttribute("aria-pressed", String(other.dataset.aspect === aspect));
     }
-    case "size-half":
-      void op("image.resize", { width: Math.max(1, Math.round(view.width / 2)) }, "Resize 50%");
-      break;
-    case "size-double":
-      void op("image.resize", { width: Math.round(view.width * 2) }, "Resize 2×");
-      break;
-    case "size-reset":
-      void op("image.clearResize", {}, "Reset size");
-      break;
-    default:
-      break;
+  });
+  aspectBar.appendChild(button);
+}
+
+const sizeBar = el("div", "i-sizebar");
+const sizeWidth = el("input", "i-sizebar__num");
+sizeWidth.type = "number";
+sizeWidth.min = "1";
+sizeWidth.setAttribute("aria-label", "Output width");
+const sizeHeight = el("input", "i-sizebar__num");
+sizeHeight.type = "number";
+sizeHeight.min = "1";
+sizeHeight.setAttribute("aria-label", "Output height");
+const sizeLink = el("button", "c-btn", "Link");
+sizeLink.type = "button";
+sizeLink.dataset.link = "1";
+sizeLink.title = "Keep the aspect ratio";
+sizeLink.addEventListener("click", () => {
+  resizeLink = !resizeLink;
+  syncSizeBar();
+});
+const sizePreview = el("span", "i-sizebar__preview");
+sizeBar.append(sizeWidth, el("span", "i-sizebar__x", "×"), sizeHeight, sizeLink, sizePreview);
+
+sizeWidth.addEventListener("input", () => {
+  const view = state.image;
+  if (resizeLink && view && view.width > 0 && view.height > 0) {
+    const ratio = view.width / view.height;
+    const width = Number(sizeWidth.value);
+    if (width >= 1) sizeHeight.value = String(Math.max(1, Math.round(width / ratio)));
   }
+  updateSizePreview();
+});
+sizeHeight.addEventListener("input", () => {
+  const view = state.image;
+  if (resizeLink && view && view.width > 0 && view.height > 0) {
+    const ratio = view.width / view.height;
+    const height = Number(sizeHeight.value);
+    if (height >= 1) sizeWidth.value = String(Math.max(1, Math.round(height * ratio)));
+  }
+  updateSizePreview();
 });
 
-async function applyCrop() {
+function sizeValues() {
+  return { width: Number(sizeWidth.value) || 0, height: Number(sizeHeight.value) || 0 };
+}
+
+function updateSizePreview() {
+  const { width, height } = sizeValues();
+  sizePreview.textContent = width >= 1 || height >= 1 ? `→ ${width || "auto"} × ${height || "auto"} px` : "Type a side";
+}
+
+function syncSizeBar() {
+  const view = state.image;
+  const active = document.activeElement;
+  if (view) {
+    if (active !== sizeWidth) sizeWidth.value = String(view.width);
+    if (active !== sizeHeight) sizeHeight.value = String(view.height);
+  } else {
+    sizeWidth.value = "";
+    sizeHeight.value = "";
+  }
+  sizeLink.setAttribute("aria-pressed", String(resizeLink));
+  sizeLink.textContent = resizeLink ? "Linked" : "Free";
+  updateSizePreview();
+}
+
+function cropHint() {
+  const view = state.image;
+  if (!view) return "";
+  const draft = cropDraft ?? draftOf(view);
+  const whole =
+    draft.x === 0 && draft.y === 0 && draft.width >= view.naturalWidth && draft.height >= view.naturalHeight;
+  return whole
+    ? "Drag on the picture to keep a rectangle."
+    : `${Math.round(draft.width)} × ${Math.round(draft.height)} px — Apply crop keeps it.`;
+}
+
+function optionsBar(ctx) {
+  const view = state.image;
+  const tool = toolOf(ctx);
+  if (!view) return { hint: "File → Open image… · or drop an image anywhere", ids: [] };
+  if (tool === "crop") {
+    return { left: aspectBar, hint: cropHint(), ids: ["image.applyCrop", "image.cancelCrop", "image.clearCrop"] };
+  }
+  if (tool === "resize") {
+    syncSizeBar();
+    return { left: sizeBar, hint: "Clear a side to keep the ratio.", ids: ["image.applyResize"] };
+  }
+  if (tool === "adjust") {
+    return { hint: "Double-click a slider to reset it.", ids: ["image.neutral"] };
+  }
+  return { hint: "Warm and cool also move Temperature — the two add up.", ids: [] };
+}
+
+// ── actions ─────────────────────────────────────────────────────────────────
+
+function applyCrop() {
   const draft = cropDraft;
   if (!draft) return markError("Draw a crop rectangle first.");
   const view = state.image;
@@ -736,98 +875,80 @@ async function applyCrop() {
   const y = Math.max(0, Math.round(draft.y));
   const width = Math.max(1, Math.round(draft.width));
   const height = Math.max(1, Math.round(draft.height));
-  const whole =
-    view &&
-    x === 0 &&
-    y === 0 &&
-    width >= view.naturalWidth &&
-    height >= view.naturalHeight;
-  await op(
+  const whole = view && x === 0 && y === 0 && width >= view.naturalWidth && height >= view.naturalHeight;
+  cropDraft = null;
+  return op(
     whole ? "image.clearCrop" : "image.crop",
     whole ? {} : { x, y, width, height },
     whole ? "No crop" : `Crop ${width}×${height}`,
   );
-  cropDraft = null;
 }
 
-// Toolstrip
-$("#rot-left").addEventListener("click", () => void op("image.rotate", { degrees: -90 }, "Rotate left"));
-$("#rot-right").addEventListener("click", () => void op("image.rotate", { degrees: 90 }, "Rotate right"));
-$("#flip-h").addEventListener("click", () => void op("image.flip", { axis: "x" }, "Flip horizontal"));
-$("#flip-v").addEventListener("click", () => void op("image.flip", { axis: "y" }, "Flip vertical"));
-$("#reset").addEventListener("click", () => void op("image.reset", {}, "Reset edits"));
-$("#rail-reset").addEventListener("click", () => void op("image.reset", {}, "Reset edits"));
-$("#export").addEventListener("click", () => void exportPng());
-$("#undo").addEventListener("click", () => void undo());
-$("#redo").addEventListener("click", () => void redo());
-$("#palette").addEventListener("click", () => window.NucleusKit?.openPalette());
-$("#file-input").addEventListener("change", (event) => void openFile(event.target.files?.[0]));
+function cancelCrop() {
+  cropDraft = state.image?.crop ? draftOf(state.image) : null;
+  setTool("adjust");
+}
 
-$("#save").addEventListener("click", () => {
-  if (!state.image) return markError("Nothing to save yet.");
-  const link = document.createElement("a");
-  link.href = "/api/project";
-  link.download = "image.nucleus.json";
-  link.click();
-});
+function applyResize() {
+  const { width, height } = sizeValues();
+  if (width < 1 && height < 1) return markError("Type a width or a height.");
+  const params = {};
+  if (width >= 1) params.width = width;
+  if (height >= 1) params.height = height;
+  return op("image.resize", params, `Resize ${params.width ?? "auto"}×${params.height ?? "auto"}`);
+}
 
-$("#project-input").addEventListener("change", async (event) => {
-  const file = event.target.files?.[0];
-  if (!file) return;
-  setBusy(true);
-  try {
-    const payload = JSON.parse(await file.text());
-    const restored = await post("/api/project", payload);
-    if (settle(restored)) markReady(`Opened ${file.name}.`);
-    sourceImg = null;
-    sourceKey = null;
-    await ensureSource();
-  } catch (error) {
-    markError(`Open failed: ${error instanceof Error ? error.message : String(error)}`);
-  } finally {
-    setBusy(false);
-    render();
-    event.target.value = "";
+function showDetails() {
+  const view = state.image;
+  if (!view) return;
+  const body = el("div", "i-details");
+  body.appendChild(section("Image"));
+  body.appendChild(propRow("File", view.name));
+  body.appendChild(propRow("Type", view.mime));
+  body.appendChild(propRow("Source size", `${view.naturalWidth} × ${view.naturalHeight}`));
+  body.appendChild(propRow("Output", `${view.width} × ${view.height}`));
+  body.appendChild(propRow("Rotation", `${view.rotation}°`));
+  body.appendChild(propRow("Flips", [view.flipX ? "horizontal" : "", view.flipY ? "vertical" : ""].filter(Boolean).join(", ") || "none"));
+  body.appendChild(propRow("Filter", view.filter));
+
+  body.appendChild(section("Applied edits"));
+  if (view.edits.length === 0) {
+    body.appendChild(hint("Nothing yet — the source is untouched."));
+  } else {
+    const list = el("div", "i-edits");
+    for (const edit of view.edits) list.appendChild(el("span", "i-edit", edit));
+    body.appendChild(list);
   }
-});
 
-// Zoom
-$("#zoom-in").addEventListener("click", () => setZoom(lastFit * 1.25));
-$("#zoom-out").addEventListener("click", () => setZoom(lastFit / 1.25));
-$("#zoom-fit").addEventListener("click", () => {
-  zoom = "fit";
-  render();
-});
-$("#hold-before").addEventListener("pointerdown", () => {
-  showBefore = true;
-  renderStage();
-});
-$("#hold-before").addEventListener("pointerup", () => {
-  showBefore = false;
-  renderStage();
-});
-$("#hold-before").addEventListener("pointerleave", () => {
-  showBefore = false;
-  renderStage();
-});
+  const dev = el("div");
+  dev.setAttribute("data-dev", "");
+  dev.appendChild(section("Developer details"));
+  dev.appendChild(propRow("Document id", view.id));
+  body.appendChild(dev);
 
-function setZoom(value) {
-  zoom = Math.max(0.05, Math.min(8, value));
-  render();
+  if (window.NucleusShell?.dialog) {
+    void window.NucleusShell.dialog({
+      title: "Image details",
+      content: body,
+      actions: [{ label: "Close", value: true, primary: true }],
+    });
+  }
 }
 
-// Crop overlay gestures
-const overlay = $("#crop-overlay");
-const cropBox = $("#crop-box");
+// ── crop overlay gestures ───────────────────────────────────────────────────
 
 function pointToSource(event) {
   const view = state.image;
   const rect = canvas.getBoundingClientRect();
-  const baseWidth = activeTool === "crop" ? view.naturalWidth : view.width;
+  const baseWidth = lastTool === "crop" ? view.naturalWidth : view.width;
   const scale = rect.width / baseWidth;
   const x = (event.clientX - rect.left) / scale;
   const y = (event.clientY - rect.top) / scale;
-  return { x: Math.max(0, Math.min(view.naturalWidth, x)), y: Math.max(0, Math.min(view.naturalHeight, y)), scale };
+  return {
+    x: Math.max(0, Math.min(view.naturalWidth, x)),
+    y: Math.max(0, Math.min(view.naturalHeight, y)),
+    scale,
+  };
 }
 
 function ratioOf(aspect) {
@@ -850,8 +971,8 @@ overlay.addEventListener("pointerdown", (event) => {
   }
   const rect = canvas.getBoundingClientRect();
   const scale = rect.width / view.width;
-  const inX = (draft.x) * scale + rect.left;
-  const inY = (draft.y) * scale + rect.top;
+  const inX = draft.x * scale + rect.left;
+  const inY = draft.y * scale + rect.top;
   const inW = draft.width * scale;
   const inH = draft.height * scale;
   const inside =
@@ -927,28 +1048,13 @@ function endDrag() {
       height: Math.max(1, Math.round(cropDraft.height)),
     };
   }
-  renderInspector();
+  render();
 }
 overlay.addEventListener("pointerup", endDrag);
 overlay.addEventListener("pointercancel", endDrag);
 
-$("#crop-apply").addEventListener("click", () => void applyCrop());
-$("#crop-cancel").addEventListener("click", () => {
-  cropDraft = state.image?.crop ?? null;
-  activeTool = "adjust";
-  render();
-});
+// ── files: drag & drop, paste ───────────────────────────────────────────────
 
-for (const button of document.querySelectorAll("[data-aspect]")) {
-  button.addEventListener("click", () => {
-    cropAspect = button.dataset.aspect;
-    for (const other of document.querySelectorAll("[data-aspect]")) {
-      other.setAttribute("aria-pressed", String(other === button));
-    }
-  });
-}
-
-// Files: drag & drop, paste
 stage.addEventListener("dragover", (event) => {
   event.preventDefault();
   stage.classList.add("--dragover");
@@ -979,46 +1085,246 @@ window.addEventListener("drop", (event) => {
   if (file) void openFile(file);
 });
 
-// Keyboard
-document.addEventListener("keydown", (event) => {
-  const typing = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement;
-  const mod = event.ctrlKey || event.metaKey;
-  const key = event.key.toLowerCase();
-
-  if (mod && key === "z" && !event.shiftKey) { event.preventDefault(); void undo(); return; }
-  if (mod && ((key === "z" && event.shiftKey) || key === "y")) { event.preventDefault(); void redo(); return; }
-  if (mod && key === "e") { event.preventDefault(); void exportPng(); return; }
-  if (mod && key === "0") { event.preventDefault(); zoom = "fit"; render(); return; }
-  if (mod && (key === "=" || key === "+")) { event.preventDefault(); setZoom(lastFit * 1.25); return; }
-  if (mod && key === "-") { event.preventDefault(); setZoom(lastFit / 1.25); return; }
-  if (typing || mod) return;
-
-  if (event.key === "\\") { showBefore = true; renderStage(); return; }
-  if (!state.image) return;
-  switch (key) {
-    case "r": void op("image.rotate", { degrees: event.shiftKey ? -90 : 90 }, "Rotate"); break;
-    case "h": void op("image.flip", { axis: "x" }, "Flip horizontal"); break;
-    case "v": void op("image.flip", { axis: "y" }, "Flip vertical"); break;
-    case "escape":
-      if (activeTool === "crop") {
-        cropDraft = state.image?.crop ?? null;
-        activeTool = "adjust";
-        render();
-      }
-      break;
-    default: break;
-  }
+$("#file-input").addEventListener("change", (event) => {
+  const input = event.target;
+  void openFile(input.files?.[0]);
+  input.value = "";
 });
-
-document.addEventListener("keyup", (event) => {
-  if (event.key === "\\") {
-    showBefore = false;
-    renderStage();
-  }
+$("#project-input").addEventListener("change", (event) => {
+  const input = event.target;
+  void openProject(input.files?.[0]);
+  input.value = "";
 });
 
 window.addEventListener("resize", () => {
   if (state.image) renderStage();
+});
+
+// ── shell ───────────────────────────────────────────────────────────────────
+
+emptyEl.appendChild(
+  window.NucleusShell.emptyState({
+    title: "Open a picture, change it, keep the original.",
+    body: "Rotate, crop, resize, grade and filter. Nothing is baked in: the original stays untouched and every step can be undone.",
+    cta: "Open image",
+    onCta: () => $("#file-input").click(),
+    hint: "Drop or paste an image anywhere · Ctrl K lists every command · nothing leaves this machine",
+  }),
+);
+
+function statusLeft() {
+  const node = el("span", "i-status");
+  const dot = el("span", "c-dot");
+  if (state.status.kind === "busy") dot.classList.add("c-dot--busy");
+  if (state.status.kind === "error") dot.classList.add("c-dot--err");
+  node.append(dot, document.createTextNode(state.status.text));
+  return node;
+}
+
+function zoomCluster() {
+  const wrap = el("span", "i-zoom");
+  const out = el("button", "i-zoom__btn", "−");
+  out.type = "button";
+  out.setAttribute("aria-label", "Zoom out");
+  out.title = "Zoom out (Ctrl -)";
+  out.addEventListener("click", () => setZoom(lastScale / 1.25));
+
+  const pct = el("span", "i-zoom__pct", `${Math.round(lastScale * 100)}%`);
+  pct.title = "Current zoom";
+
+  const inBtn = el("button", "i-zoom__btn", "+");
+  inBtn.type = "button";
+  inBtn.setAttribute("aria-label", "Zoom in");
+  inBtn.title = "Zoom in (Ctrl =)";
+  inBtn.addEventListener("click", () => setZoom(lastScale * 1.25));
+
+  const fit = el("button", "i-zoom__btn", "Fit");
+  fit.type = "button";
+  fit.setAttribute("aria-pressed", String(zoom === "fit"));
+  fit.title = "Fit the window (Ctrl 0)";
+  fit.addEventListener("click", zoomFit);
+
+  wrap.append(out, pct, inBtn, fit);
+  return wrap;
+}
+
+function statusRight() {
+  const view = state.image;
+  if (!view) return "No image";
+  const wrap = el("span", "i-statusbar");
+  wrap.appendChild(el("span", "c-mono", `${view.width}×${view.height} · ${plural(view.edits.length, "edit")}`));
+  wrap.appendChild(zoomCluster());
+  return wrap;
+}
+
+window.NucleusShell.mount({
+  app: { name: "Image Editor", accent: "#f472b6" },
+  main: stage,
+  menus: [
+    {
+      label: "File",
+      items: [
+        { id: "file.open", label: "Open image…", shortcut: "Ctrl+O", run: () => $("#file-input").click() },
+        { id: "file.openProject", label: "Open project…", run: () => $("#project-input").click() },
+        { id: "file.saveProject", label: "Save project…", shortcut: "Ctrl+S", run: saveProject },
+        { sep: true },
+        { id: "file.exportPng", label: "Export PNG", shortcut: "Ctrl+E", run: () => void exportPng() },
+      ],
+    },
+    {
+      label: "Edit",
+      items: [
+        { id: "edit.undo", label: "Undo", shortcut: "Ctrl+Z", command: "tape.undo", run: () => void undo() },
+        {
+          id: "edit.redo",
+          label: "Redo",
+          shortcut: ["Ctrl+Shift+Z", "Ctrl+Y"],
+          command: "tape.redo",
+          run: () => void redo(),
+        },
+        { sep: true },
+        {
+          id: "edit.resetAll",
+          label: "Reset all edits",
+          run: () => void op("image.reset", {}, "Reset edits"),
+        },
+        { sep: true },
+        { id: "edit.details", label: "Image details…", shortcut: "Ctrl+I", run: showDetails },
+      ],
+    },
+    {
+      label: "Image",
+      items: [
+        {
+          id: "image.rotateLeft",
+          label: "Rotate left",
+          shortcut: "Shift+R",
+          run: () => void op("image.rotate", { degrees: -90 }, "Rotate left"),
+        },
+        {
+          id: "image.rotateRight",
+          label: "Rotate right",
+          shortcut: "R",
+          run: () => void op("image.rotate", { degrees: 90 }, "Rotate right"),
+        },
+        { sep: true },
+        {
+          id: "image.flipH",
+          label: "Flip horizontal",
+          shortcut: "H",
+          run: () => void op("image.flip", { axis: "x" }, "Flip horizontal"),
+        },
+        {
+          id: "image.flipV",
+          label: "Flip vertical",
+          shortcut: "V",
+          run: () => void op("image.flip", { axis: "y" }, "Flip vertical"),
+        },
+        { sep: true },
+        { id: "image.cropTool", label: "Crop…", shortcut: "C", run: () => setTool("crop") },
+        { id: "image.resizeTool", label: "Resize…", shortcut: "S", run: () => setTool("resize") },
+        { sep: true },
+        { id: "image.applyCrop", label: "Apply crop", run: () => void applyCrop() },
+        { id: "image.cancelCrop", label: "Cancel crop", shortcut: "Esc", run: cancelCrop },
+        {
+          id: "image.clearCrop",
+          label: "Whole image",
+          run: () => {
+            cropDraft = null;
+            return op("image.clearCrop", {}, "No crop");
+          },
+        },
+        { id: "image.applyResize", label: "Apply size", run: () => void applyResize() },
+        { sep: true },
+        {
+          id: "image.sizeHalf",
+          label: "Half size",
+          run: () => op("image.resize", { width: Math.max(1, Math.round(state.image.width / 2)) }, "Resize 50%"),
+        },
+        {
+          id: "image.sizeDouble",
+          label: "Double size",
+          run: () => op("image.resize", { width: Math.round(state.image.width * 2) }, "Resize 2×"),
+        },
+        { id: "image.sizeNatural", label: "Natural size", run: () => op("image.clearResize", {}, "Reset size") },
+        { sep: true },
+        {
+          id: "image.neutral",
+          label: "Neutral adjustments",
+          run: () =>
+            op(
+              "image.adjust",
+              Object.fromEntries(ADJUSTMENTS.map(([key]) => [key, 0])),
+              "Neutral adjustments",
+            ),
+        },
+      ],
+    },
+    {
+      label: "View",
+      items: [
+        { id: "view.zoomIn", label: "Zoom in", shortcut: ["Ctrl+=", "Ctrl++"], run: () => setZoom(lastScale * 1.25) },
+        { id: "view.zoomOut", label: "Zoom out", shortcut: "Ctrl+-", run: () => setZoom(lastScale / 1.25) },
+        { id: "view.fit", label: "Fit", shortcut: "Ctrl+0", run: zoomFit },
+        { sep: true },
+        {
+          id: "view.compare",
+          label: "Compare with original",
+          shortcut: "\\",
+          checked: () => showBefore,
+          run: () => {
+            showBefore = !showBefore;
+            render();
+          },
+        },
+        { sep: true },
+        ...window.NucleusShell.standardViewMenu(),
+      ],
+    },
+    { label: "Help", items: window.NucleusShell.standardHelpMenu() },
+  ],
+  primary: { id: "file.exportPng" },
+  noun: (ids) => plural(ids.length, "edit"),
+  options: optionsBar,
+  rail: [
+    { id: "adjust", icon: "adjust", label: "Adjust" },
+    { id: "filter", icon: "filter", label: "Filter" },
+    { id: "crop", icon: "crop", label: "Crop" },
+    { id: "resize", icon: "resize", label: "Resize" },
+    { id: "history", icon: "history", label: "History" },
+  ],
+  // The rail picks the tool; the controls live in the right column, so the left
+  // panel is only ever History (the shell paints it).
+  panels: { left: () => null, right: inspectorPanel },
+  status: { left: statusLeft, right: statusRight },
+  enabled: {
+    "file.open": () => !busy,
+    "file.openProject": () => !busy,
+    "file.saveProject": () => Boolean(state.image),
+    "file.exportPng": () => ready(),
+    "edit.undo": () => Boolean(state.canUndo) && !busy,
+    "edit.redo": () => Boolean(state.canRedo) && !busy,
+    "edit.resetAll": () => ready() && state.image.edits.length > 0,
+    "edit.details": () => Boolean(state.image),
+    "image.rotateLeft": ready,
+    "image.rotateRight": ready,
+    "image.flipH": ready,
+    "image.flipV": ready,
+    "image.cropTool": () => Boolean(state.image),
+    "image.resizeTool": () => Boolean(state.image),
+    "image.applyCrop": () => ready() && lastTool === "crop",
+    "image.cancelCrop": () => Boolean(state.image) && lastTool === "crop",
+    "image.clearCrop": () => ready() && Boolean(state.image.crop),
+    "image.applyResize": () => ready() && lastTool === "resize",
+    "image.sizeHalf": ready,
+    "image.sizeDouble": ready,
+    "image.sizeNatural": () => ready() && Boolean(state.image.resize),
+    "image.neutral": () => ready() && Object.values(state.image.adjustments).some((value) => value !== 0),
+    "view.zoomIn": () => Boolean(state.image),
+    "view.zoomOut": () => Boolean(state.image),
+    "view.fit": () => Boolean(state.image),
+    "view.compare": () => Boolean(state.image),
+  },
 });
 
 // ── boot ────────────────────────────────────────────────────────────────────
@@ -1038,10 +1344,6 @@ if (typeof EventSource !== "undefined") {
     clearTimeout(timer);
     timer = setTimeout(() => void refresh(), 250);
   });
-}
-
-function escapeHtml(text) {
-  return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 void refresh();

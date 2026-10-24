@@ -893,6 +893,13 @@ body:has(#nk-scrubber.nk-visible) .c-app {
   min-height: 0;
 }
 
+/* Explicit placement: a hidden panel is display:none, so auto-placement would
+   slide the canvas into its 0px column. Image Editor has no left panel. */
+.nk-rail { grid-column: 1; grid-row: 1; }
+.nk-panel--left { grid-column: 2; grid-row: 1; }
+.nk-main { grid-column: 3; grid-row: 1; }
+.nk-panel--right { grid-column: 4; grid-row: 1; }
+
 .nk-rail {
   display: flex;
   flex-direction: column;
