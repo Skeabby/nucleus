@@ -206,6 +206,7 @@ pub fn gen_catalog(
     base_url: Option<&str>,
     repo: &str,
     out: &Path,
+    launcher_setup: Option<&Path>,
 ) -> Result<usize, PackError> {
     let mut archives: Vec<PathBuf> = fs::read_dir(dir)?
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))
@@ -270,9 +271,33 @@ pub fn gen_catalog(
             "size": app.size,
         }));
     }
+    let mut launcher = serde_json::Value::Null;
+    if let Some(setup) = launcher_setup {
+        let name = setup
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let url = match base_url {
+            Some(base) => format!("{}/{}", base.trim_end_matches('/'), name),
+            None => name.clone(),
+        };
+        let sha256 = sha256_reader(&mut File::open(setup)?)?;
+        launcher = serde_json::json!({
+            "version": env!("CARGO_PKG_VERSION"),
+            "url": url,
+            "sha256": sha256,
+        });
+    }
+
     let catalog = serde_json::json!({
         "suiteVersion": env!("CARGO_PKG_VERSION"),
         "generatedAt": now_iso8601(),
+        // N1: the signed payload states when it was issued and when it stops
+        // being usable, so a fetch can be refused without trusting a clock in
+        // the payload itself.
+        "issuedAt": now_iso8601(),
+        "expiresAt": expires_iso8601(TRUST_MAX_AGE_DAYS),
+        "launcher": launcher,
         "apps": entries,
     });
     if let Some(parent) = out.parent()
@@ -302,6 +327,22 @@ fn now_iso8601() -> String {
     let (year, month, day) = civil_from_days(days);
     let (hour, minute, second) = (rest / 3_600, (rest % 3_600) / 60, rest % 60);
     format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+}
+
+/// How long a freshly signed catalogue stays usable. Mirrors
+/// `nucleus_launcher_core::trust::CATALOG_MAX_AGE_DAYS`.
+pub const TRUST_MAX_AGE_DAYS: i64 = 90;
+
+fn expires_iso8601(days: i64) -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0) as i64
+        + days * 86_400;
+    let days = secs.div_euclid(86_400);
+    let (year, month, day) = civil_from_days(days);
+    format!("{year:04}-{month:02}-{day:02}T00:00:00Z")
 }
 
 /// Days since 1970-01-01 to a civil `(year, month, day)`, using Howard
@@ -446,7 +487,7 @@ mod tests {
         pack_app_dir(&app, &archives.join("nucleus.notes-0.1.0-win64.nucleusapp")).unwrap();
 
         let catalog_path = root.join("mirror/catalog.json");
-        let count = gen_catalog(&archives, None, "Skeabby/nucleus", &catalog_path).unwrap();
+        let count = gen_catalog(&archives, None, "Skeabby/nucleus", &catalog_path, None).unwrap();
         assert_eq!(count, 1);
 
         // The catalogue must load and resolve the relative asset path.
@@ -475,7 +516,7 @@ mod tests {
         pack_app_dir(&app, &archive).unwrap();
 
         let catalog_path = mirror.join("catalog.json");
-        gen_catalog(&archives, None, "Skeabby/nucleus", &catalog_path).unwrap();
+        gen_catalog(&archives, None, "Skeabby/nucleus", &catalog_path, None).unwrap();
 
         // 1. Load the catalogue the way the launcher does: fetch, then resolve
         //    relative asset URLs against the catalogue's own folder.

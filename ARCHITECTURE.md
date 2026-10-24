@@ -483,7 +483,60 @@
 > `.github/social-preview.png`), and the PDF shot confirms the new Page menu, the five-control
 > contextual bar and page-number-only cards.
 
-
+> **Update #23 (2026-10-24) — N1: the catalogue is signed, and the launcher refuses what it cannot
+> prove.** The update path trusted whatever `releases/latest/download/catalog.json` said: no
+> signature, `http://` accepted, redirects unchecked, the fetched file written to `%APPDATA%` before
+> any check, downgrades persisted, every app auto-installed at startup without a click, and a
+> catalogue bundle free to declare `kind: command`. That is now closed end to end.
+>
+> **The signing side is a tool, not a convention.** `tools/sign-catalog.mjs` signs the **exact bytes**
+> of a catalogue with Ed25519 from `node:crypto` and writes a detached envelope
+> `{"algorithm":"ed25519","keyId":"2026-a","signature":"<base64>"}` to `catalog.json.sig`; `--generate`
+> writes a PKCS#8 key pair outside the tree and prints the 32-byte public literal that goes into the
+> binary, while `--verify` re-checks a signature against a public key. A field *inside* the JSON cannot
+> sign the JSON, hence the detached file.
+>
+> **The verifying side is pure and testable** (`crates/nucleus-launcher-core/src/trust.rs`, 11 tests):
+> `TRUSTED_KEYS: &[(&str, [u8; 32])]` is a list, so rotation is additive; `verify` uses **`ring`
+> 0.17** — already compiled in through `ureq`/`rustls`, so the primitive costs zero new crates (the
+> brief named `ed25519-dalek`; same curve, same guarantee, smaller tree). A **golden vector** (fixed
+> seed `0x00..0x1f`, fixed payload, fixed signature, documented in the test) means the verifier can
+> never change silently. `TrustState` (`%APPDATA%\Nucleus\trust.json`) records the highest `issuedAt`
+> and `suiteVersion` ever accepted, which is what makes a rollback visible;
+> `catalogue_launch_problem` is the policy for what a downloaded bundle may run.
+>
+> **Order is the security property.** `updater::survey` fetches bytes + `.sig`, verifies, and only
+> *then* parses; freshness (`expiresAt`, 90 days) is checked on the fetch path only, and a fetched
+> catalogue without an expiry is refused rather than grandfathered. `store_override` writes
+> `catalog.json` **and** its signature atomically, and `catalogue::load` now verifies the override
+> before believing it — hand-writing `%APPDATA%\Nucleus\catalog.json` no longer changes what gets
+> installed, it logs a warning and falls back to the embedded copy. `net.rs` refuses `http://` before
+> opening a socket **and** on the final URL after redirects (`/releases/latest/download/` redirects, so
+> checking only the input would allow a mid-flight downgrade), gates `file://` behind
+> `NUCLEUS_ALLOW_FILE_CATALOG=1`/`cfg(test)`, and `fetch_bytes` errors on an oversized body instead of
+> truncating it (`take(limit)` used to hand the verifier a silently shortened payload).
+>
+> **Consent replaces the silent auto-install.** `updates` defaults to `ask`: the startup survey now
+> stops at "these can be updated" and the UI shows a banner with **Install now** (queued one job at a
+> time) and **Always install** (which flips the persisted policy to `auto`). Self-update no longer
+> builds a URL from a remote version string: it uses the **signed** `launcher {version, url, sha256}`
+> block, refuses a version mismatch or a missing checksum, verifies the downloaded installer and
+> **deletes it on mismatch**. `install_checked(.., InstallOrigin::Catalog)` re-reads the manifest that
+> landed and rolls the app back out if it is `kind: command`, starts anything but `node`, or carries an
+> absolute/`..` argument — a bundle the user picked on disk stays unrestricted.
+>
+> **Release pipeline.** `release.yml` re-generates the catalogue once the installer exists (so the
+> signed `launcher` block carries the setup's real checksum), signs it with the `NUCLEUS_CATALOG_KEY`
+> secret, **fails the release loudly when the secret is missing** — an unsigned catalogue is rejected
+> by every N1 launcher, so publishing one is worse than not publishing — and ships `catalog.json.sig`
+> next to `catalog.json`. The private key never enters the repo: generate it to a sibling directory
+> and `gh secret set NUCLEUS_CATALOG_KEY < <key>.private.pem`.
+>
+> Evidence: Rust **128 → 145 tests** (trust 11, catalogue 6, net 11, updater 3, install 13), `cargo
+> clippy --all-targets -D warnings` clean, `cargo fmt` clean. The tests cover the threats the brief
+> names: tampered bytes, wrong key, unknown key id, unsigned and malformed envelopes, expiry,
+> downgrade by date and by version, plain `http://`, an oversized body, a hand-written override, a
+> tampered override, and a catalogue bundle that tries to run `cmd.exe`.
 
 ---
 

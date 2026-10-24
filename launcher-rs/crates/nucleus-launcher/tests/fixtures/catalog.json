@@ -1,0 +1,16 @@
+{
+  "suiteVersion": "9.9.9",
+  "generatedAt": "2026-10-24T00:00:00Z",
+  "issuedAt": "2026-10-24T00:00:00Z",
+  "expiresAt": "2027-01-22T00:00:00Z",
+  "apps": [
+    {
+      "id": "nucleus.notes",
+      "repo": "Skeabby/nucleus",
+      "releaseAsset": "notes.nucleusapp",
+      "url": "apps/notes.nucleusapp",
+      "version": "9.9.9",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ]
+}

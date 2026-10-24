@@ -105,6 +105,31 @@ jobs:
       - name: Installers (setup exe + portable zip)
         run: powershell -ExecutionPolicy Bypass -File scripts\make-setup.ps1
 
+      # N1 — update trust. The catalogue that ships is re-generated now that the
+      # installer exists, so its signed `launcher` block carries the setup's own
+      # checksum, then signed over its exact bytes. An unsigned catalogue is
+      # refused by every launcher that has N1, so a missing key must fail the
+      # release loudly instead of publishing something nobody can use.
+      - name: Sign the catalogue
+        shell: pwsh
+        env:
+          NUCLEUS_CATALOG_KEY: ${{ secrets.NUCLEUS_CATALOG_KEY }}
+        run: |
+          if (-not $env:NUCLEUS_CATALOG_KEY) {
+            throw "NUCLEUS_CATALOG_KEY is empty: add the Ed25519 private key as a repository secret (see tools/sign-catalog.mjs --generate)."
+          }
+          $setup = Get-Item "dist\NucleusSetup-*win64.exe" | Select-Object -First 1
+          if (-not $setup) { throw "no installer built" }
+          launcher-rs\target\release\nucleus-launcher.exe `
+            --gen-catalog launcher-rs\mirror\apps `
+            --out launcher-rs\mirror\catalog.json `
+            --base-url "https://github.com/$env:REPO/releases/latest/download/" `
+            --setup $setup.FullName
+          if ($LASTEXITCODE -ne 0) { throw "catalogue generation failed" }
+          node tools/sign-catalog.mjs launcher-rs/mirror/catalog.json --key-env NUCLEUS_CATALOG_KEY --key-id 2026-a
+          if ($LASTEXITCODE -ne 0) { throw "catalogue signing failed" }
+          if (-not (Test-Path "launcher-rs\mirror\catalog.json.sig")) { throw "no signature produced" }
+
       - name: Upload build artifacts (insurance)
         uses: actions/upload-artifact@v4
         with:
@@ -120,6 +145,7 @@ jobs:
             Get-Item "dist\NucleusSetup-*win64.exe" -ErrorAction SilentlyContinue
             Get-Item "dist\Nucleus-*-win64-portable.zip" -ErrorAction SilentlyContinue
             Get-Item "launcher-rs\mirror\catalog.json"
+            Get-Item "launcher-rs\mirror\catalog.json.sig"
             Get-Item "launcher-rs\mirror\apps\*.nucleusapp"
           ) | Where-Object { $_ } | ForEach-Object { $_.FullName }
           if (-not $files) { throw "no release assets matched" }

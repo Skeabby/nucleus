@@ -296,6 +296,9 @@ mod tests {
         let catalog = nucleus_launcher_core::Catalog {
             suite_version: "0.4.0-alpha".into(),
             generated_at: None,
+            issued_at: None,
+            expires_at: None,
+            launcher: None,
             apps: vec![CatalogEntry {
                 id: LAUNCHER_SELF_ID.into(),
                 repo: "Skeabby/nucleus".into(),
@@ -388,6 +391,9 @@ mod tests {
         let catalog = nucleus_launcher_core::Catalog {
             suite_version: "0.4.0-alpha".into(),
             generated_at: None,
+            issued_at: None,
+            expires_at: None,
+            launcher: None,
             apps: vec![CatalogEntry {
                 id: "nucleus.notes".into(),
                 repo: "Skeabby/nucleus".into(),

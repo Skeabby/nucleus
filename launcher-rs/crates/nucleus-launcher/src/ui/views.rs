@@ -130,6 +130,12 @@ pub enum Action {
     Uninstall,
     /// Download the new launcher installer and swap to it (updater).
     SelfUpdate,
+    /// Install every app the catalogue says is newer (one job at a time, the
+    /// rest go through the queue). This is the click behind the consent
+    /// banner, so an `ask` install is one deliberate act.
+    UpdateAll,
+    /// Remember "install updates without asking" after the user chose it.
+    SetUpdatesAuto,
 }
 
 /// Node availability, disclosed honestly.

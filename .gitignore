@@ -44,3 +44,9 @@ Thumbs.db
 # local env
 .env
 .env.local
+
+# N1 signing keys: `tools/sign-catalog.mjs --generate` writes them outside the
+# tree, never here. The public key lives in the binary, not as a file.
+*.private.pem
+*.public.pem
+nucleus-keys/

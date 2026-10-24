@@ -95,6 +95,53 @@ pub enum InstallError {
 
     #[error("failed to roll back `{id}` after a failed install: {source}")]
     RollbackFailed { id: String, source: io::Error },
+
+    #[error("refused `{id}`: {reason}")]
+    Refused { id: String, reason: String },
+}
+
+/// Where the archive came from, which decides what it is allowed to run.
+/// A bundle the user picked on disk may be a `command` app they wrote; a bundle
+/// the catalogue pushed may not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallOrigin {
+    /// Fetched because a (signed) catalogue listed it.
+    Catalog,
+    /// Chosen by the user on disk.
+    Local,
+}
+
+/// [`install_archive`] plus the launch policy for the origin (N1).
+///
+/// The manifest is only parsed inside `install_archive`, so the policy runs on
+/// the manifest that landed on disk; a refusal rolls the app back out instead of
+/// leaving a downloaded `kind: command` bundle installed.
+pub fn install_checked(
+    archive_path: &Path,
+    apps_root: &Path,
+    expected_sha256: Option<&str>,
+    origin: InstallOrigin,
+) -> Result<InstallOutcome, InstallError> {
+    let outcome = install_archive(archive_path, apps_root, expected_sha256)?;
+    if origin == InstallOrigin::Local {
+        return Ok(outcome);
+    }
+    let manifest_path = outcome.dir.join(MANIFEST_FILE);
+    let reason = match fs::read_to_string(&manifest_path) {
+        Ok(text) => match parse_manifest(&text) {
+            Ok(manifest) => nucleus_launcher_core::catalogue_launch_problem(&manifest),
+            Err(err) => Some(format!("unreadable manifest: {err}")),
+        },
+        Err(err) => Some(format!("unreadable manifest: {err}")),
+    };
+    if let Some(reason) = reason {
+        let _ = uninstall_app(&outcome.id, apps_root);
+        return Err(InstallError::Refused {
+            id: outcome.id,
+            reason,
+        });
+    }
+    Ok(outcome)
 }
 
 /// A successful install.

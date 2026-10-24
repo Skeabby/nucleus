@@ -12,3 +12,8 @@ serde_json.workspace = true
 semver.workspace = true
 sha2 = "0.10"
 thiserror.workspace = true
+
+# N1 - update trust. ring is already in the tree through ureq/rustls, so the
+# Ed25519 primitive arrives without a new crate; base64 decodes the envelope.
+ring = "0.17"
+base64 = "0.22"

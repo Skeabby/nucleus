@@ -42,10 +42,17 @@ stack**.
 - **Agent-first, not agent-bolted-on.** MCP is a first-class frontend: an AI agent can do everything
   a human can, because it talks to the *same* command bus — discovering commands
   (`cmd_list` / `cmd_describe`), invoking them (`cmd_invoke`), with one shared undo stack in session.
-- **Apps install themselves, verified.** A `.nucleusapp` archive is SHA-256 checked, unpacked to a
-  temp directory, verified **file by file** against a digest ledger , then swapped in atomically with rollback: zip-slip, decompression bombs and case-collisions
-  are all refused. The launcher does the whole loop itself: `--pack`, `--gen-catalog`,
-  `--install-app` / `--uninstall-app`, and the Install / Update / Remove buttons in the UI.
+- **Apps install themselves, verified — and the catalogue is signed.** A `.nucleusapp` archive is
+  SHA-256 checked, unpacked to a temp directory, verified **file by file** against a digest ledger,
+  then swapped in atomically with rollback: zip-slip, decompression bombs and case-collisions are all
+  refused. The catalogue that names those archives is **Ed25519-signed** (`catalog.json.sig`, keys
+  embedded in the binary for rotation), the signature is checked **before the JSON is parsed**, and a
+  catalogue that is unsigned, signed by an unknown key, tampered with, expired or older than the one
+  already trusted is refused — the launcher keeps the last good one and says so. Downloads are
+  `https` only, an update is installed only when **you** click, and a downloaded bundle may only start
+  a relative `node` server, never an arbitrary command. The loop is in the box: `--pack`,
+  `--gen-catalog`, `tools/sign-catalog.mjs`, `--install-app` / `--uninstall-app`, and the Install /
+  Update / Remove buttons in the UI.
 - **A native launcher, no Electron.** `launcher-rs/` is a single Rust binary  with manifest discovery, Open / Stop, grid and table views,
   category filter, search, dark/light themes, a smoke-test CLI — and a flat hairline design of its
   own: brand violet reserved for the chrome, orbit icon tiles, corner brackets.

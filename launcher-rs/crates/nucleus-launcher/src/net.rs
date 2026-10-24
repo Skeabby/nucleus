@@ -34,8 +34,11 @@ pub enum NetError {
     #[error("HTTP {status} for `{url}`")]
     Status { status: u16, url: String },
 
-    #[error("unsupported source `{0}` (expected a path, `file://` or `http(s)://` URL)")]
+    #[error("unsupported source `{0}` (expected a path, `file://` or `https://` URL)")]
     Unsupported(String),
+
+    #[error("refusing a plain-`http://` source (`{0}`) — TLS is required")]
+    Insecure(String),
 
     #[error("the catalogue is larger than the {limit}-byte limit")]
     TooLarge { limit: u64 },
@@ -66,29 +69,73 @@ pub fn local_path(source: &str) -> Option<PathBuf> {
     Some(PathBuf::from(source))
 }
 
-/// Fetch a UTF-8 text resource (the catalogue) from a path or URL.
-pub fn fetch_text(source: &str) -> Result<String, NetError> {
-    if let Some(path) = local_path(source) {
-        let meta = fs::metadata(&path)?;
-        if meta.len() > MAX_CATALOG_BYTES {
-            return Err(NetError::TooLarge {
-                limit: MAX_CATALOG_BYTES,
-            });
+/// `file://` and bare paths are a developer convenience (and how the test suite
+/// runs offline). A shipped build only ever fetches a catalogue over TLS unless
+/// this variable is explicitly set.
+fn file_sources_allowed() -> bool {
+    cfg!(test) || std::env::var("NUCLEUS_ALLOW_FILE_CATALOG").is_ok_and(|value| value == "1")
+}
+
+/// Refuse cleartext before opening a socket, and again on the URL we actually
+/// ended up at: `/releases/latest/download/` redirects, so checking only the
+/// input would let an `https` source downgrade to `http` mid-flight.
+fn require_tls(url: &str) -> Result<(), NetError> {
+    if url.starts_with("http://") {
+        return Err(NetError::Insecure(url.to_string()));
+    }
+    if !url.starts_with("https://") {
+        return Err(NetError::Unsupported(url.to_string()));
+    }
+    Ok(())
+}
+
+fn resolve_local(source: &str) -> Result<Option<PathBuf>, NetError> {
+    match local_path(source) {
+        Some(path) => {
+            if file_sources_allowed() {
+                Ok(Some(path))
+            } else {
+                Err(NetError::Unsupported(source.to_string()))
+            }
         }
-        return Ok(fs::read_to_string(&path)?);
+        None => Ok(None),
     }
-    if !source.starts_with("http://") && !source.starts_with("https://") {
-        return Err(NetError::Unsupported(source.to_string()));
+}
+
+/// Fetch a resource into memory, refusing anything above `limit` instead of
+/// silently truncating it: a signature over a truncated body is a mystery, not
+/// a verdict.
+pub fn fetch_bytes(source: &str, limit: u64) -> Result<Vec<u8>, NetError> {
+    if let Some(path) = resolve_local(source)? {
+        let meta = fs::metadata(&path)?;
+        if meta.len() > limit {
+            return Err(NetError::TooLarge { limit });
+        }
+        return Ok(fs::read(&path)?);
     }
+    require_tls(source)?;
     let response = ureq::get(source)
         .call()
         .map_err(|err| map_ureq(source, err))?;
-    let mut body = String::new();
+    let final_url = response.get_url().to_string();
+    if final_url.starts_with("http://") {
+        return Err(NetError::Insecure(final_url));
+    }
+    let mut body = Vec::new();
     response
         .into_reader()
-        .take(MAX_CATALOG_BYTES)
-        .read_to_string(&mut body)?;
+        .take(limit + 1)
+        .read_to_end(&mut body)?;
+    if body.len() as u64 > limit {
+        return Err(NetError::TooLarge { limit });
+    }
     Ok(body)
+}
+
+/// Fetch a UTF-8 text resource (the catalogue) from a path or URL.
+pub fn fetch_text(source: &str) -> Result<String, NetError> {
+    let bytes = fetch_bytes(source, MAX_CATALOG_BYTES)?;
+    String::from_utf8(bytes).map_err(|_| NetError::Unsupported(source.to_string()))
 }
 
 /// Fetch and parse the catalogue. A malformed body yields an empty catalogue
@@ -114,16 +161,18 @@ pub fn download_to_file(
         let reader = File::open(&local)?;
         return finish_copy(reader, dest, total, progress, cancel);
     }
-    if source.starts_with("http://") || source.starts_with("https://") {
-        let response = ureq::get(source)
-            .call()
-            .map_err(|err| map_ureq(source, err))?;
-        let total = response
-            .header("Content-Length")
-            .and_then(|value| value.parse::<u64>().ok());
-        return finish_copy(response.into_reader(), dest, total, progress, cancel);
+    require_tls(source)?;
+    let response = ureq::get(source)
+        .call()
+        .map_err(|err| map_ureq(source, err))?;
+    let final_url = response.get_url().to_string();
+    if final_url.starts_with("http://") {
+        return Err(NetError::Insecure(final_url));
     }
-    Err(NetError::Unsupported(source.to_string()))
+    let total = response
+        .header("Content-Length")
+        .and_then(|value| value.parse::<u64>().ok());
+    finish_copy(response.into_reader(), dest, total, progress, cancel)
 }
 
 /// Convenience: download a catalogue app's archive into `dest`.
@@ -275,9 +324,52 @@ mod tests {
 
     #[test]
     fn fetch_rejects_http_like_transport_only_offline() {
-        // `ftp://` is neither a local path nor http(s) → unsupported, no network.
+        // `ftp://` is neither a local path nor https → unsupported, no network.
         let err = fetch_text("ftp://example.com/catalog.json").unwrap_err();
         assert!(matches!(err, NetError::Unsupported(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn plain_http_is_refused_before_any_socket() {
+        // No network access in the test suite: the refusal must happen first.
+        let err = fetch_text("http://example.com/catalog.json").unwrap_err();
+        assert!(matches!(err, NetError::Insecure(_)), "got {err:?}");
+        let dir = scratch("http");
+        let dest = dir.join("out.bin");
+        let cancel = AtomicBool::new(false);
+        let err = download_to_file("http://example.com/a.bin", &dest, &mut |_, _| {}, &cancel)
+            .unwrap_err();
+        assert!(matches!(err, NetError::Insecure(_)), "got {err:?}");
+        assert!(!dest.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_body_above_the_limit_errors_instead_of_truncating() {
+        let dir = scratch("toobig");
+        let path = dir.join("catalog.json");
+        fs::write(&path, vec![b'x'; 4096]).unwrap();
+        let err = fetch_bytes(path.to_str().unwrap(), 1024).unwrap_err();
+        assert!(
+            matches!(err, NetError::TooLarge { limit: 1024 }),
+            "got {err:?}"
+        );
+        // ...and the exact-size body still reads.
+        assert_eq!(
+            fetch_bytes(path.to_str().unwrap(), 4096).unwrap().len(),
+            4096
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_non_utf8_catalogue_is_an_error_not_a_panic() {
+        let dir = scratch("binary");
+        let path = dir.join("catalog.json");
+        fs::write(&path, [0xff, 0xfe, 0x00]).unwrap();
+        let err = fetch_text(path.to_str().unwrap()).unwrap_err();
+        assert!(matches!(err, NetError::Unsupported(_)), "got {err:?}");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

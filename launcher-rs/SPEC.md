@@ -63,10 +63,22 @@ launcher-rs/
   kills tree; closing leaves no node.
 
 ## M2 semantics
-- Catalog URL precedence: `NUCLEUS_CATALOG_URL` (file:// ok) → `NUCLEUS_OFFLINE=1` mirror file →
-  `https://raw.githubusercontent.com/Skeabby/nucleus/main/launcher-rs/mirror/catalog.json`.
+- Catalog URL precedence: `NUCLEUS_CATALOG` (dev override, unsigned, `https` only unless
+  `NUCLEUS_ALLOW_FILE_CATALOG=1`) → verified `%APPDATA%\Nucleus\catalog.json` (+`catalog.json.sig`) →
+  embedded `mirror/catalog.json`. `NUCLEUS_OFFLINE=1` simply skips the network survey.
+- **Trust (N1)**: the fetched catalogue is verified **before parsing** against
+  `catalog.json.sig` — a detached JSON envelope `{algorithm, keyId, signature}` over the exact bytes —
+  with the Ed25519 keys compiled into the binary (`TRUSTED_KEYS`, key ids for rotation). Unsigned,
+  unknown key, bad signature, past `expiresAt` (90 days) or a downgrade versus `trust.json` ⇒ refused,
+  last good catalogue kept, notice shown. Plain `http://` is refused before the socket and again on the
+  final URL after redirects.
 - Asset URL default `https://github.com/{repo}/releases/latest/download/{releaseAsset}`; sha256 must be
   64 hex else entry dropped.
+- **Launch policy**: a bundle that came from the catalogue may only start a relative `node` server —
+  no `kind: command`, no shell, no absolute/`..` argument; a refusal rolls the install back out.
+- **Consent**: `updates` defaults to `ask` (banner with *Install now* / *Always install*), persisted in
+  `trust.json`. The self-update uses the signed `launcher {version, url, sha256}` block and refuses a
+  version mismatch, a missing checksum, or a mismatched download.
 - Install pipeline (worker, one per id): download `.part` streaming-hash → verify → unzip via
   `enclosed_name()` into `<id>\.staging-<ver>` → atomic swap to `<id>\current` → update
   `installed.json` (temp+rename). Emit `Phase { Queued, Downloading{done,total}, Verifying, Installing,

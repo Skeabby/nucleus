@@ -20,11 +20,28 @@ pub struct CatalogEntry {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LauncherRelease {
+    pub version: String,
+    pub url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 #[derive(Default)]
 pub struct Catalog {
     #[serde(default)]
     pub suite_version: String,
     pub generated_at: Option<String>,
+    /// When the publisher signed this payload (N1). Drives the downgrade rule.
+    pub issued_at: Option<String>,
+    /// Freshness deadline for a *fetched* catalogue (N1). Empty for the
+    /// embedded fallback, which never expires.
+    pub expires_at: Option<String>,
+    /// The installer matching [`Catalog::suite_version`], so a self-update is
+    /// checked against the signed payload instead of a guessed URL.
+    pub launcher: Option<LauncherRelease>,
     #[serde(default)]
     pub apps: Vec<CatalogEntry>,
 }
@@ -44,6 +61,15 @@ pub fn parse_catalog(json: &str) -> Catalog {
         .get("generatedAt")
         .and_then(Value::as_str)
         .map(str::to_string);
+    let issued_at = root
+        .get("issuedAt")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let expires_at = root
+        .get("expiresAt")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let launcher = root.get("launcher").and_then(launcher_from_value);
     let mut apps = Vec::new();
     if let Some(list) = root.get("apps").and_then(Value::as_array) {
         for item in list {
@@ -55,8 +81,35 @@ pub fn parse_catalog(json: &str) -> Catalog {
     Catalog {
         suite_version,
         generated_at,
+        issued_at,
+        expires_at,
+        launcher,
         apps,
     }
+}
+
+/// The signed `launcher` block: a self-update is only offered for a release the
+/// signature covers, with its own checksum.
+fn launcher_from_value(value: &Value) -> Option<LauncherRelease> {
+    let obj = value.as_object()?;
+    let get = |key: &str| obj.get(key).and_then(Value::as_str).map(str::to_string);
+    let version = get("version")?;
+    let url = get("url")?;
+    if version.trim().is_empty() || url.trim().is_empty() {
+        return None;
+    }
+    let sha256 = get("sha256");
+    if let Some(hash) = &sha256 {
+        let valid = hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit());
+        if !valid {
+            return None;
+        }
+    }
+    Some(LauncherRelease {
+        version,
+        url,
+        sha256,
+    })
 }
 
 /// `None` when required fields are missing, or the sha256 is not 64 hex chars.

@@ -1349,6 +1349,8 @@ dependencies = [
 name = "nucleus-launcher-core"
 version = "0.4.1-alpha"
 dependencies = [
+ "base64 0.22.1",
+ "ring",
  "semver",
  "serde",
  "serde_json",

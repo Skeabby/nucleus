@@ -47,6 +47,7 @@ fn main() {
     let mut gen_catalog_dir: Option<PathBuf> = None;
     let mut out: Option<PathBuf> = None;
     let mut base_url: Option<String> = None;
+    let mut setup_path: Option<PathBuf> = None;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
@@ -142,6 +143,16 @@ fn main() {
                     }
                 }
             }
+            "--setup" => {
+                index += 1;
+                match args.get(index) {
+                    Some(path) => setup_path = Some(PathBuf::from(path)),
+                    None => {
+                        eprintln!("error: --setup requires the installer path");
+                        std::process::exit(2);
+                    }
+                }
+            }
             other => {
                 eprintln!("error: unknown argument `{other}`");
                 eprintln!(
@@ -194,7 +205,13 @@ fn main() {
             eprintln!("error: --gen-catalog requires --out <file>");
             std::process::exit(2);
         };
-        match pack::gen_catalog(&dir, base_url.as_deref(), "Skeabby/nucleus", &out) {
+        match pack::gen_catalog(
+            &dir,
+            base_url.as_deref(),
+            "Skeabby/nucleus",
+            &out,
+            setup_path.as_deref(),
+        ) {
             Ok(count) => {
                 println!("wrote {count} app(s) to {}", out.display());
                 return;
@@ -218,7 +235,12 @@ fn main() {
     // --- CLI: install a `.nucleusapp` into the user apps root ---------------
     if let Some(archive) = install {
         let apps_root = paths::nucleus_data_dir().join("apps"); // %APPDATA%\Nucleus\apps
-        match install::install_archive(&archive, &apps_root, sha256.as_deref()) {
+        match install::install_checked(
+            &archive,
+            &apps_root,
+            sha256.as_deref(),
+            install::InstallOrigin::Local,
+        ) {
             Ok(outcome) => {
                 let summary = json!({
                     "installed": true,
@@ -275,7 +297,12 @@ fn main() {
             std::process::exit(1);
         }
         let apps_root = data_dir.join("apps");
-        match install::install_archive(&dest, &apps_root, entry.sha256.as_deref()) {
+        match install::install_checked(
+            &dest,
+            &apps_root,
+            entry.sha256.as_deref(),
+            install::InstallOrigin::Catalog,
+        ) {
             Ok(outcome) => {
                 let summary = json!({
                     "installed": true,

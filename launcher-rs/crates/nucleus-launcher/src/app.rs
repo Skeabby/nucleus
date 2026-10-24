@@ -9,7 +9,10 @@ use std::time::Duration;
 
 use egui::{CentralPanel, Frame, Margin, RichText, Stroke, TopBottomPanel};
 
-use nucleus_launcher_core::{AppStatus, Card, Catalog, derive_status, iso8601, pending_delta};
+use nucleus_launcher_core::{
+    AppStatus, Card, Catalog, LauncherRelease, TrustState, UpdatePolicy, derive_status, iso8601,
+    pending_delta,
+};
 
 use crate::discovery::Discovery;
 use crate::jobs::{JobEvent, Jobs, Stage};
@@ -60,10 +63,18 @@ pub struct LauncherApp {
     survey: Receiver<Result<updater::Survey, String>>,
     /// Remote `suiteVersion` newer than this build, for the header banner.
     launcher_update: Option<String>,
-    /// Apps queued for silent auto-install after the survey.
+    /// The signed installer entry matching `launcher_update` (N1). Without it,
+    /// the self-update offers a manual download instead of running a binary
+    /// picked by name.
+    launcher_release: Option<LauncherRelease>,
+    /// Apps queued for install after the survey (only when the policy is auto).
     auto_queue: VecDeque<String>,
     /// Where the self-update installer is staged until it is run.
     pending_setup: Option<PathBuf>,
+    /// N1: highest catalogue we ever accepted + the update policy.
+    trust: TrustState,
+    /// One-line explanation when a catalogue was refused, shown in the UI.
+    trust_notice: Option<String>,
 }
 
 const LOG_CAP: usize = 40;
@@ -86,9 +97,12 @@ impl LauncherApp {
         crate::ui::install_fonts(&cc.egui_ctx);
         configure_theme(&cc.egui_ctx, &Tokens::dark());
         let (jobs, job_events) = Jobs::new();
+        let data_dir = crate::paths::nucleus_data_dir();
+        let trust = updater::load_trust(&data_dir);
+        let survey_seed = trust.clone();
         let (survey_tx, survey) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let _ = survey_tx.send(updater::survey(updater::DEFAULT_BASE));
+            let _ = survey_tx.send(updater::survey(updater::DEFAULT_BASE, &survey_seed));
         });
         Self {
             discovery,
@@ -111,8 +125,11 @@ impl LauncherApp {
             pending: BTreeMap::new(),
             survey,
             launcher_update: None,
+            launcher_release: None,
             auto_queue: VecDeque::new(),
             pending_setup: None,
+            trust,
+            trust_notice: None,
         }
     }
 
@@ -144,24 +161,75 @@ impl LauncherApp {
         counts
     }
 
+    /// Every installed app whose catalogue version is newer than what is on
+    /// disk. Used by the survey, the consent banner and `UpdateAll`.
+    fn pending_updates(&self) -> Vec<String> {
+        let mut ids = Vec::new();
+        for card in &self.discovery.cards {
+            if let Card::App(app) = card {
+                let running = self.runtime.is_running(app.id());
+                let status = derive_status(app.installed.as_ref(), app.catalog.as_ref(), running);
+                if status == AppStatus::UpdateAvailable {
+                    ids.push(app.id().to_string());
+                }
+            }
+        }
+        ids
+    }
+
+    /// Queue every pending update, then start the first job. The rest drain
+    /// through `auto_queue` as each job finishes, so two installs never write
+    /// into the app store at once.
+    fn queue_all_updates(&mut self) {
+        let ids = self.pending_updates();
+        if ids.is_empty() {
+            self.log_line("everything is up to date");
+            return;
+        }
+        let count = ids.len();
+        for id in ids {
+            self.auto_queue.push_back(id);
+        }
+        if self.jobs.is_busy() {
+            self.log_line(format!("{count} update(s) queued"));
+            return;
+        }
+        if let Some(next) = self.auto_queue.pop_front() {
+            self.start_install(&next);
+        }
+    }
+
     /// Drain the (single) startup survey result: store the remote catalogue
-    /// as the local override, reload app statuses, queue silent updates and
-    /// flag a launcher self-update when the remote suite is newer.
+    /// **if it was signed and is not older than the one we already trust**,
+    /// reload app statuses, and install updates only when the policy says so.
     fn step_survey(&mut self) {
         let outcome = match self.survey.try_recv() {
             Ok(Ok(result)) => result,
             Ok(Err(message)) => {
+                // N1: a refused catalogue is a visible event, not a silent skip.
+                self.trust_notice = Some(message.clone());
                 self.log_line(format!("update check skipped: {message}"));
                 return;
             }
             Err(_) => return, // still running in the background
         };
         let data_dir = crate::paths::nucleus_data_dir();
-        if let Err(message) = updater::store_override(&outcome.catalog_json, &data_dir) {
+        if let Err(message) =
+            updater::store_override(&outcome.catalog_json, &outcome.signature_json, &data_dir)
+        {
             self.log_line(format!("catalogue update not stored: {message}"));
             return;
         }
+        self.trust.accept(
+            outcome.catalog.issued_at.as_deref(),
+            &outcome.catalog.suite_version,
+        );
+        if let Err(message) = updater::save_trust(&self.trust, &data_dir) {
+            self.log_line(format!("trust record not saved: {message}"));
+        }
+        self.trust_notice = None;
         self.launcher_update = outcome.launcher_update.clone();
+        self.launcher_release = outcome.catalog.launcher.clone();
         if let Some(remote) = &outcome.launcher_update {
             self.log_line(format!(
                 "launcher {remote} available — restart to pick it up"
@@ -170,8 +238,9 @@ impl LauncherApp {
         self.catalog = crate::catalogue::load(&data_dir).0;
         self.discovery = crate::discovery::discover(&self.paths, &self.catalog);
 
-        // Queue every installed app whose catalogue version is newer; jobs
-        // run one at a time, so the queue drains as each job finishes.
+        // Every installed app whose catalogue version is newer. `ask` (the
+        // default) stops here: the Updates filter and the app's own Install
+        // button are the consent. `auto` queues the refresh.
         let mut refreshes = Vec::new();
         for card in &self.discovery.cards {
             if let Card::App(app) = card {
@@ -182,12 +251,19 @@ impl LauncherApp {
                 }
             }
         }
-        for id in refreshes {
-            self.log_line(format!("{id} update available — installing"));
-            self.auto_queue.push_back(id);
-        }
-        if let Some(next) = self.auto_queue.pop_front() {
-            self.start_install(&next);
+        if self.trust.updates == UpdatePolicy::Auto {
+            for id in refreshes {
+                self.log_line(format!("{id} update available — installing"));
+                self.auto_queue.push_back(id);
+            }
+            if let Some(next) = self.auto_queue.pop_front() {
+                self.start_install(&next);
+            }
+        } else if !refreshes.is_empty() {
+            self.log_line(format!(
+                "{} ready to update — open Updates to install",
+                refreshes.join(", ")
+            ));
         }
     }
 
@@ -416,9 +492,14 @@ impl LauncherApp {
                 return Err("cancelled".into());
             }
             ctx.stage(Stage::Installing);
-            crate::install::install_archive(&dest, &apps_root, sha.as_deref())
-                .map(|outcome| format!("installed {} {}", outcome.id, outcome.version))
-                .map_err(|err| err.to_string())
+            crate::install::install_checked(
+                &dest,
+                &apps_root,
+                sha.as_deref(),
+                crate::install::InstallOrigin::Catalog,
+            )
+            .map(|outcome| format!("installed {} {}", outcome.id, outcome.version))
+            .map_err(|err| err.to_string())
         });
         if !started {
             self.log_line("a job is already running");
@@ -441,13 +522,28 @@ impl LauncherApp {
         }
     }
 
-    /// Download the new launcher's installer to `%TEMP%` (rolling `latest`
-    /// release asset, matching the surveyed suite version).
+    /// Download the new launcher's installer to `%TEMP%`, using the **signed**
+    /// `launcher` block of the catalogue instead of guessing a filename from a
+    /// remote version string. No signed entry (or no checksum) ⇒ no download.
     fn start_launcher_update(&mut self, new_version: String) {
-        let url = format!(
-            "{}/NucleusSetup-{new_version}-win64.exe",
-            updater::DEFAULT_BASE.trim_end_matches('/')
-        );
+        let Some(release) = self.launcher_release.clone() else {
+            self.log_line(format!(
+                "launcher {new_version} has no signed installer entry — download it from the release page"
+            ));
+            return;
+        };
+        if release.version != new_version {
+            self.log_line(format!(
+                "launcher {new_version} does not match the signed entry ({})",
+                release.version
+            ));
+            return;
+        }
+        let Some(expected) = release.sha256.clone() else {
+            self.log_line("the signed launcher entry has no checksum — refusing to run it");
+            return;
+        };
+        let url = release.url.clone();
         let dest = std::env::temp_dir().join(format!("NucleusSetup-{new_version}-win64.exe"));
         self.pending_setup = Some(dest.clone());
         let label = format!("Launcher update {new_version}");
@@ -457,6 +553,17 @@ impl LauncherApp {
             let mut progress = |done: u64, total: Option<u64>| ctx.progress(done, total);
             crate::net::download_to_file(&url, &dest, &mut progress, &cancel)
                 .map_err(|err| err.to_string())?;
+            ctx.stage(Stage::Verifying);
+            let mut file = std::fs::File::open(&dest)
+                .map_err(|err| format!("reading the installer: {err}"))?;
+            let actual = crate::verify::sha256_reader(&mut file)
+                .map_err(|err| format!("reading the installer: {err}"))?;
+            if !actual.eq_ignore_ascii_case(&expected) {
+                let _ = std::fs::remove_file(&dest);
+                return Err(format!(
+                    "installer checksum mismatch (expected {expected}, got {actual}) — deleted"
+                ));
+            }
             Ok("launcher installer staged".into())
         });
         if !started {
@@ -506,6 +613,17 @@ impl LauncherApp {
                 };
                 self.start_launcher_update(remote);
             }
+            Action::UpdateAll => self.queue_all_updates(),
+            Action::SetUpdatesAuto => {
+                self.trust.updates = UpdatePolicy::Auto;
+                let data_dir = crate::paths::nucleus_data_dir();
+                if let Err(message) = updater::save_trust(&self.trust, &data_dir) {
+                    self.log_line(format!("update policy not saved: {message}"));
+                } else {
+                    self.log_line("updates will install automatically from now on");
+                }
+                self.queue_all_updates();
+            }
         }
     }
 }
@@ -542,6 +660,12 @@ impl eframe::App for LauncherApp {
         let bus_snapshot: Vec<BusLine> = self.bus.iter().cloned().collect();
         let pending_list = self.pending_list();
         let launcher_banner: Option<String> = self.launcher_update.clone();
+        let trust_notice: Option<String> = self.trust_notice.clone();
+        let prompt_updates: Vec<String> = if self.trust.updates == UpdatePolicy::Ask {
+            self.pending_updates()
+        } else {
+            Vec::new()
+        };
         let mut actions: Vec<(String, Action)> = Vec::new();
         let border = Stroke::new(1.0_f32, t.line);
 
@@ -620,6 +744,45 @@ impl eframe::App for LauncherApp {
                                     if button.clicked() {
                                         actions
                                             .push(("nucleus-launcher".into(), Action::SelfUpdate));
+                                    }
+                                });
+                            });
+                        ui.add_space(14.0);
+                    }
+                    if let Some(notice) = &trust_notice {
+                        Frame::NONE
+                            .fill(t.sunken)
+                            .stroke(Stroke::new(1.0_f32, t.warn))
+                            .inner_margin(Margin::symmetric(14, 10))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    RichText::new(format!("Catalogue refused: {notice}"))
+                                        .font(fonts::body(12.0))
+                                        .color(t.warn),
+                                );
+                            });
+                        ui.add_space(14.0);
+                    }
+                    if !prompt_updates.is_empty() {
+                        Frame::NONE
+                            .fill(t.sunken)
+                            .stroke(border)
+                            .inner_margin(Margin::symmetric(14, 10))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    let names = prompt_updates.join(", ");
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "{names} can be updated. Nothing is downloaded until you say so."
+                                        ))
+                                        .font(fonts::body(12.0))
+                                        .color(t.ink),
+                                    );
+                                    if ui.button(RichText::new("Install now").color(t.accent)).clicked() {
+                                        actions.push(("__updates__".into(), Action::UpdateAll));
+                                    }
+                                    if ui.button(RichText::new("Always install").color(t.muted)).clicked() {
+                                        actions.push(("__updates__".into(), Action::SetUpdatesAuto));
                                     }
                                 });
                             });
