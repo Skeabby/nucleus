@@ -60,7 +60,13 @@ pub fn survey(base: &str, state: &TrustState) -> Result<Survey, String> {
     let catalog = parse_catalog(&catalog_json);
 
     // Freshness applies to a *fetched* catalogue; the cached/embedded one is
-    // exempt so an offline machine keeps working.
+    // exempt so an offline machine keeps working. If the publisher omits
+    // expires_at (rolling/latest edge case) we still accept a signed catalogue
+    // only if it passes downgrade/high-water checks — but we must not trust
+    // an indefinite catalogue blindly. Enforce expiry only when present and
+    // malformed; missing remains a soft failure only for non-update paths,
+    // but the brief requires freshness. Treat "missing" as an error here to
+    // avoid accepting an untime-limited fetched catalogue.
     let expires_at = catalog.expires_at.clone().unwrap_or_default();
     if expires_at.trim().is_empty() {
         return Err("the catalogue does not say when it expires".to_string());

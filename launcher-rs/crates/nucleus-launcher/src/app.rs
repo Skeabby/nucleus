@@ -419,6 +419,9 @@ impl LauncherApp {
                 JobEvent::Failed { id, message } => {
                     self.log_line(format!("{id} failed: {message}"));
                     self.job = None;
+                    if id == SELF_JOB {
+                        self.pending_setup = None;
+                    }
                     // One bad archive must not stall the rest of the queue.
                     let next = self.auto_queue.pop_front();
                     self.start_queued(next);
@@ -426,6 +429,12 @@ impl LauncherApp {
                 JobEvent::Cancelled { id } => {
                     self.log_line(format!("{id} cancelled"));
                     self.job = None;
+                    if id == SELF_JOB {
+                        self.pending_setup = None;
+                    }
+                    // Don't let a cancellation stall the rest of the silent queue.
+                    let next = self.auto_queue.pop_front();
+                    self.start_queued(next);
                 }
             }
         }

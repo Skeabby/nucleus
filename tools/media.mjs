@@ -247,7 +247,7 @@ async function seedNotes(app) {
       "- [x] Rotate the signing key",
       "- [x] Refresh the rolling `latest` release",
       "- [ ] Smoke-test the updater on a clean profile",
-      "- [ ] Ask Mitch to re-record the demo",
+      "- [ ] Re-record the demo",
       "",
       "> The launcher stays alive so closing it shuts down the apps it owns.",
       "",
