@@ -35,7 +35,7 @@ Those land with v0.4; today's proof stops where the checks stop.
 
 | Claim | Measured | Reproduce |
 |---|---|---|
-| Rust unit tests | **149** (nucleus_launcher 85 · nucleus_launcher_core 64) | `cargo test --workspace` |
+| Rust unit tests | **150** (nucleus_launcher 85 · nucleus_launcher_core 65) | `cargo test --workspace` |
 | Catalogue signature tests | **16** (11 `trust::` · 5 signed/unsigned/tampered catalogue) | `cargo test --workspace trust:: catalogue::` |
 
 The `Launcher (Rust)` workflow runs fmt, clippy (`-D warnings`), tests and a release build on

@@ -210,6 +210,7 @@ fn add_candidate(dir: &Path, source: AppSource, apps: &mut Vec<AppMeta>, errors:
             installed_at: String::new(),
             source,
             channel: manifest.update_channel.map(|c| c.as_str().to_string()),
+            bundle_sha256: read_install_marker(manifest_path.parent()),
         });
         apps.push(AppMeta {
             manifest,
@@ -230,6 +231,24 @@ fn is_hidden(path: &Path) -> bool {
         .and_then(|name| name.to_str())
         .map(|name| name.starts_with('.') || name.starts_with('_'))
         .unwrap_or(false)
+}
+
+/// Read `<app dir>/nucleus.install.json` and pull out `bundleSha256`.
+///
+/// Absent or unreadable is normal: apps installed before this marker existed,
+/// and apps discovered from a checkout, have no archive to point at. In both
+/// cases "unknown" must not be mistaken for "different" (that would light up
+/// every card with a permanent phantom update).
+fn read_install_marker(app_dir: Option<&Path>) -> Option<String> {
+    let dir = app_dir?;
+    let raw = fs::read_to_string(dir.join(crate::install::INSTALL_MARKER)).ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let hash = parsed.get("bundleSha256")?.as_str()?.trim();
+    if hash.is_empty() {
+        None
+    } else {
+        Some(hash.to_ascii_lowercase())
+    }
 }
 
 /// Load `<repo>/apps/launcher/roadmap.json`. Missing/unreadable → error string.

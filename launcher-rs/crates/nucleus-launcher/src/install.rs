@@ -37,6 +37,9 @@ use crate::verify::sha256_reader;
 
 /// The app manifest's file name at an archive's (and an install's) root.
 pub const MANIFEST_FILE: &str = "nucleus.app.json";
+/// Marker written next to the manifest after an install, recording which
+/// archive the copy came from (`{"bundleSha256": "..."}`).
+pub const INSTALL_MARKER: &str = "nucleus.install.json";
 /// The directory inside a `.nucleusapp` that becomes the app root on install.
 pub const PAYLOAD_DIR: &str = "payload";
 
@@ -297,12 +300,27 @@ pub fn install_archive(
     // Best effort: a running app may hold the old files.
     cleanup_dir(&stash);
 
+    // Remember which archive this copy came from, so a rebuild that keeps the
+    // version does not look "already installed" forever (see derive_status).
+    // `sha256_reader` rewound the handle after the check, so re-read the file;
+    // a failure here is not fatal — the app is installed either way.
+    if let Ok(actual) = sha256_of(archive_path) {
+        let marker = format!("{{\n  \"bundleSha256\": \"{actual}\"\n}}\n");
+        let _ = fs::write(app_dir.join(INSTALL_MARKER), marker);
+    }
+
     Ok(InstallOutcome {
         id,
         version,
         dir: app_dir,
         files,
     })
+}
+
+/// Hash a whole file (the archive) without loading it into memory.
+fn sha256_of(path: &Path) -> Result<String, std::io::Error> {
+    let mut file = File::open(path)?;
+    sha256_reader(&mut file).map_err(std::io::Error::other)
 }
 
 /// Anything that can go wrong uninstalling a catalogue app.

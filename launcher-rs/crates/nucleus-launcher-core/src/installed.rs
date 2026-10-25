@@ -17,6 +17,14 @@ pub struct InstalledRecord {
     pub source: AppSource,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub channel: Option<String>,
+    /// Hash of the archive this copy came from, when it came from a catalogue.
+    ///
+    /// A version is a promise, not a proof: a rebuild that changes the UI but
+    /// keeps `0.4.0` makes "installed 0.4.0 vs catalogue 0.4.0" a lie, and the
+    /// update never ships. Comparing the hashes catches that, and it is free —
+    /// the catalogue already carries the digest we verified on the way in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundle_sha256: Option<String>,
 }
 
 /// A `BTreeMap` keyed by app id for stable iteration order.
@@ -79,6 +87,7 @@ mod tests {
                 installed_at: "2026-10-13T09:00:00Z".into(),
                 source: AppSource::UserData,
                 channel: Some("stable".into()),
+                bundle_sha256: None,
             },
         );
         index

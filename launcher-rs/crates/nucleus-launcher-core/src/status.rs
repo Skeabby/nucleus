@@ -57,6 +57,17 @@ pub fn derive_status(
             let latest = cat.version.as_deref().unwrap_or("");
             if !latest.is_empty() && is_update(latest, &found.version) {
                 AppStatus::UpdateAvailable
+            } else if let (Some(have), Some(want)) =
+                (found.bundle_sha256.as_deref(), cat.sha256.as_deref())
+            {
+                // Same version, different bytes: the publisher rebuilt the app
+                // without bumping it. Shipping nothing would leave the user on
+                // the old build forever, so treat it as an update.
+                if !have.is_empty() && !want.is_empty() && !have.eq_ignore_ascii_case(want) {
+                    AppStatus::UpdateAvailable
+                } else {
+                    AppStatus::Installed
+                }
             } else {
                 AppStatus::Installed
             }
@@ -77,6 +88,7 @@ mod tests {
             installed_at: String::new(),
             source: crate::model::AppSource::Repo,
             channel: None,
+            bundle_sha256: None,
         }
     }
 
@@ -115,6 +127,36 @@ mod tests {
                 false
             ),
             AppStatus::UpdateAvailable
+        );
+    }
+
+    #[test]
+    fn same_version_but_different_bytes_is_an_update() {
+        // The publisher rebuilt the app without bumping it: the version lies,
+        // the digest does not.
+        let mut have = installed("0.1.0");
+        have.bundle_sha256 =
+            Some("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".to_string());
+        assert_eq!(
+            derive_status(Some(&have), Some(&catalog(Some("0.1.0"))), false),
+            AppStatus::UpdateAvailable
+        );
+
+        // Matching digests stay quiet, and a record without one stays quiet too
+        // (installs made before this field existed must not all light up).
+        have.bundle_sha256 =
+            Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string());
+        assert_eq!(
+            derive_status(Some(&have), Some(&catalog(Some("0.1.0"))), false),
+            AppStatus::Installed
+        );
+        assert_eq!(
+            derive_status(
+                Some(&installed("0.1.0")),
+                Some(&catalog(Some("0.1.0"))),
+                false
+            ),
+            AppStatus::Installed
         );
     }
 
