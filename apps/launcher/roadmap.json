@@ -1,9 +1,11 @@
-﻿{
-    "id":  "nucleus.image",
-    "name":  "Image Editor",
-    "description":  "Layers, masks, non-destructive adjustments and export.",
-    "category":  "image",
-    "inspiredBy":  "Photoshop",
-    "emoji":  "ðŸ–¼ï¸",
-    "color":  "#F472B6"
-}
+﻿[
+  {
+    "id": "nucleus.image",
+    "name": "Image Editor",
+    "description": "Layers, masks, non-destructive adjustments and export.",
+    "category": "image",
+    "inspiredBy": "Photoshop",
+    "emoji": "🖼️",
+    "color": "#F472B6"
+  }
+]
