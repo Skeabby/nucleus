@@ -40,6 +40,7 @@ fn main() {
     let mut list = false;
     let mut repo: Option<PathBuf> = None;
     let mut install: Option<PathBuf> = None;
+    let mut allow_commands = false;
     let mut sha256: Option<String> = None;
     let mut install_app: Option<String> = None;
     let mut uninstall_app: Option<String> = None;
@@ -52,6 +53,10 @@ fn main() {
     while index < args.len() {
         match args[index].as_str() {
             "--smoke" => smoke = true,
+            // A local `launch.kind: command` bundle is refused unless the user
+            // says so explicitly (N1): the installer cannot tell a bundle they
+            // wrote from one they downloaded from a forum.
+            "--allow-commands" => allow_commands = true,
             "--list" => list = true,
             "--repo" => {
                 index += 1;
@@ -157,8 +162,8 @@ fn main() {
                 eprintln!("error: unknown argument `{other}`");
                 eprintln!(
                     "usage: nucleus-launcher [--smoke] [--list] [--repo <path>] \
-                     [--install <.nucleusapp>] [--sha256 <hex>] [--install-app <id>] \
-                     [--uninstall-app <id>] \
+                     [--install <.nucleusapp>] [--sha256 <hex>] [--allow-commands] \
+                     [--install-app <id>] [--uninstall-app <id>] \
                      [--pack <dir> --out <file>] [--gen-catalog <dir> --out <file> \
                      [--base-url <prefix>]]"
                 );
@@ -240,6 +245,7 @@ fn main() {
             &apps_root,
             sha256.as_deref(),
             install::InstallOrigin::Local,
+            allow_commands,
         ) {
             Ok(outcome) => {
                 let summary = json!({
@@ -302,6 +308,7 @@ fn main() {
             &apps_root,
             entry.sha256.as_deref(),
             install::InstallOrigin::Catalog,
+            false,
         ) {
             Ok(outcome) => {
                 let summary = json!({

@@ -23,7 +23,7 @@ use nucleus_launcher_core::verify::{
     DIGESTS_FILE, DigestError, Digests, MAX_META_BYTES, normalize_sha256, parse_digests,
     sanitize_entry_path, sha256_hex,
 };
-use nucleus_launcher_core::{ManifestError, parse_manifest};
+use nucleus_launcher_core::{LaunchKind, Manifest, ManifestError, parse_manifest};
 use thiserror::Error;
 use zip::ZipArchive;
 use zip::result::ZipError;
@@ -98,6 +98,9 @@ pub enum InstallError {
 
     #[error("refused `{id}`: {reason}")]
     Refused { id: String, reason: String },
+
+    #[error("`{id}` needs a confirmation: {reason}")]
+    NeedsConfirmation { id: String, reason: String },
 }
 
 /// Where the archive came from, which decides what it is allowed to run.
@@ -111,37 +114,60 @@ pub enum InstallOrigin {
     Local,
 }
 
+/// The manifest inside a `.nucleusapp`, without unpacking or installing it.
+///
+/// The origin rules are checked on these bytes *before* anything is written, so
+/// a refused bundle never reaches the app store in the first place.
+pub fn manifest_of(archive_path: &Path) -> Result<Manifest, InstallError> {
+    let file = File::open(archive_path)?;
+    let mut archive = ZipArchive::new(file)?;
+    let raw = read_entry(&mut archive, MANIFEST_FILE)?;
+    Ok(parse_manifest(&raw)?)
+}
+
 /// [`install_archive`] plus the launch policy for the origin (N1).
 ///
-/// The manifest is only parsed inside `install_archive`, so the policy runs on
-/// the manifest that landed on disk; a refusal rolls the app back out instead of
-/// leaving a downloaded `kind: command` bundle installed.
+/// - A catalogue bundle may only start a local `node` server, with arguments
+///   that stay inside the app directory (`catalogue_launch_problem`). Anything
+///   else is refused outright: the catalogue is a delivery channel, not a way
+///   to run a command on someone's machine.
+/// - A bundle the user picked on disk may be a `command` app, but only after
+///   they have been shown what that means (`allow_commands`), because the
+///   installer cannot know whether they wrote it or downloaded it from a forum.
 pub fn install_checked(
     archive_path: &Path,
     apps_root: &Path,
     expected_sha256: Option<&str>,
     origin: InstallOrigin,
+    allow_commands: bool,
 ) -> Result<InstallOutcome, InstallError> {
-    let outcome = install_archive(archive_path, apps_root, expected_sha256)?;
-    if origin == InstallOrigin::Local {
-        return Ok(outcome);
+    let manifest = manifest_of(archive_path)?;
+    match origin {
+        InstallOrigin::Catalog => {
+            if let Some(reason) = nucleus_launcher_core::catalogue_launch_problem(&manifest) {
+                return Err(InstallError::Refused {
+                    id: manifest.id.clone(),
+                    reason,
+                });
+            }
+        }
+        InstallOrigin::Local => {
+            let runs_commands = manifest
+                .launch_spec()
+                .map(|launch| matches!(launch.kind, LaunchKind::Command))
+                .unwrap_or(false);
+            if runs_commands && !allow_commands {
+                return Err(InstallError::NeedsConfirmation {
+                    id: manifest.id.clone(),
+                    reason: "it declares `launch.kind: command`, so it runs a program with your \
+                             account's rights instead of starting a local server. Re-run with \
+                             --allow-commands if you trust it."
+                        .into(),
+                });
+            }
+        }
     }
-    let manifest_path = outcome.dir.join(MANIFEST_FILE);
-    let reason = match fs::read_to_string(&manifest_path) {
-        Ok(text) => match parse_manifest(&text) {
-            Ok(manifest) => nucleus_launcher_core::catalogue_launch_problem(&manifest),
-            Err(err) => Some(format!("unreadable manifest: {err}")),
-        },
-        Err(err) => Some(format!("unreadable manifest: {err}")),
-    };
-    if let Some(reason) = reason {
-        let _ = uninstall_app(&outcome.id, apps_root);
-        return Err(InstallError::Refused {
-            id: outcome.id,
-            reason,
-        });
-    }
-    Ok(outcome)
+    install_archive(archive_path, apps_root, expected_sha256)
 }
 
 /// A successful install.
@@ -791,6 +817,70 @@ mod tests {
         assert_eq!(outcome.id, "nucleus.notes");
         assert!(apps.join("nucleus.notes/dist/server.js").is_file());
         assert!(!stash.exists(), "recovered stash cleaned up");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// A bundle that asks to run a program instead of starting a server.
+    const COMMAND_MANIFEST: &[u8] = br#"{
+      "id": "nucleus.tool",
+      "name": "Tool",
+      "version": "0.1.0",
+      "coreApiVersion": "1",
+      "launch": { "kind": "command", "command": "cmd.exe", "args": ["/c", "echo hi"] }
+    }"#;
+
+    fn command_files() -> Vec<(&'static str, &'static [u8])> {
+        vec![
+            (MANIFEST_FILE, COMMAND_MANIFEST),
+            ("tool.js", b"console.log('hi');"),
+        ]
+    }
+
+    #[test]
+    fn a_catalogue_bundle_that_runs_commands_is_refused_before_installing() {
+        let root = scratch("catalog-command");
+        let apps = root.join("apps");
+        let archive = pack_archive(&root, "tool.nucleusapp", &command_files());
+
+        let err =
+            install_checked(&archive, &apps, None, InstallOrigin::Catalog, false).unwrap_err();
+        assert!(matches!(err, InstallError::Refused { .. }), "got {err:?}");
+        // Refused *before* the app store was touched: nothing to roll back.
+        assert!(
+            !apps.join("nucleus.tool").exists(),
+            "a refused bundle must never reach the app store"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_local_bundle_that_runs_commands_needs_an_explicit_flag() {
+        let root = scratch("local-command");
+        let apps = root.join("apps");
+        let archive = pack_archive(&root, "tool.nucleusapp", &command_files());
+
+        let err = install_checked(&archive, &apps, None, InstallOrigin::Local, false).unwrap_err();
+        assert!(
+            matches!(err, InstallError::NeedsConfirmation { .. }),
+            "a local command bundle is a question, not a refusal: {err:?}"
+        );
+        assert!(!apps.join("nucleus.tool").exists());
+
+        // With the flag, the same archive installs: the user answered.
+        let outcome = install_checked(&archive, &apps, None, InstallOrigin::Local, true).unwrap();
+        assert_eq!(outcome.id, "nucleus.tool");
+        assert!(apps.join("nucleus.tool").join(MANIFEST_FILE).is_file());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_catalogue_bundle_that_starts_a_server_still_installs() {
+        let root = scratch("catalog-server");
+        let apps = root.join("apps");
+        let archive = pack_archive(&root, "notes.nucleusapp", &sample_files());
+        let outcome =
+            install_checked(&archive, &apps, None, InstallOrigin::Catalog, false).unwrap();
+        assert_eq!(outcome.id, "nucleus.notes");
         let _ = fs::remove_dir_all(&root);
     }
 }

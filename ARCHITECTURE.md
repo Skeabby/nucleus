@@ -494,7 +494,11 @@
 > `{"algorithm":"ed25519","keyId":"2026-a","signature":"<base64>"}` to `catalog.json.sig`; `--generate`
 > writes a PKCS#8 key pair outside the tree and prints the 32-byte public literal that goes into the
 > binary, while `--verify` re-checks a signature against a public key. A field *inside* the JSON cannot
-> sign the JSON, hence the detached file.
+> sign the JSON, hence the detached file. `--selftest` (`npm run check:signing`) reproduces the Rust
+> golden vector — same seed, same payload, same signature — and runs in CI and at the top of the
+> release step, because a drifted signer would publish releases every launcher silently ignores; the
+> fixtures are pinned `-text` in `.gitattributes` for the same reason (git's `autocrlf` had rewritten
+> them on the Windows runner, and the signature stopped covering the bytes on disk).
 >
 > **The verifying side is pure and testable** (`crates/nucleus-launcher-core/src/trust.rs`, 11 tests):
 > `TRUSTED_KEYS: &[(&str, [u8; 32])]` is a list, so rotation is additive; `verify` uses **`ring`
@@ -525,18 +529,35 @@
 > landed and rolls the app back out if it is `kind: command`, starts anything but `node`, or carries an
 > absolute/`..` argument — a bundle the user picked on disk stays unrestricted.
 >
-> **Release pipeline.** `release.yml` re-generates the catalogue once the installer exists (so the
-> signed `launcher` block carries the setup's real checksum), signs it with the `NUCLEUS_CATALOG_KEY`
-> secret, **fails the release loudly when the secret is missing** — an unsigned catalogue is rejected
-> by every N1 launcher, so publishing one is worse than not publishing — and ships `catalog.json.sig`
-> next to `catalog.json`. The private key never enters the repo: generate it to a sibling directory
-> and `gh secret set NUCLEUS_CATALOG_KEY < <key>.private.pem`.
+> **Release pipeline.** The pipeline is now split by *what it is allowed to publish*, because a
+> signature is only worth the custody of the key that makes it: `build` (no secrets, `contents: read`)
+> compiles, packs and installs; a push to `main` hands those artifacts to a **`canary` pre-release**
+> that no launcher reads; only a `v*`/`apps-v*` tag (or a manual dispatch) reaches the `release` job,
+> which declares `environment: release` (required reviewer) and is the only place `NUCLEUS_CATALOG_KEY`
+> is exposed. That job re-generates the catalogue once the installer exists (so the signed `launcher`
+> block carries the setup's real checksum), signs it, **fails the release loudly when the secret is
+> missing** — an unsigned catalogue is rejected by every N1 launcher, so publishing one is worse than
+> not publishing — and ships `catalog.json.sig` next to `catalog.json`. Every third-party action is
+> pinned to a commit SHA (a floating `v4` is a supply-chain hole in the thing that builds the update
+> you sign), installs go through `npm ci`, `npm audit --omit=dev` reports without blocking, and the
+> jobs hold `contents: read` except where a release is actually written. The private key never enters
+> the repo: generate it to a sibling directory and `gh secret set NUCLEUS_CATALOG_KEY <
+> <key>.private.pem` (as an environment secret).
 >
-> Evidence: Rust **128 → 145 tests** (trust 11, catalogue 6, net 11, updater 3, install 13), `cargo
-> clippy --all-targets -D warnings` clean, `cargo fmt` clean. The tests cover the threats the brief
-> names: tampered bytes, wrong key, unknown key id, unsigned and malformed envelopes, expiry,
-> downgrade by date and by version, plain `http://`, an oversized body, a hand-written override, a
-> tampered override, and a catalogue bundle that tries to run `cmd.exe`.
+> **Two smaller holes closed on the way.** An automatic update is silent, so it may not widen what an
+> app can do: before installing, the worker compares the archive's `permissions` with the installed
+> manifest and refuses a silent change, leaving the app on its current version until the user clicks
+> Update and sees it. And `launch.kind: command` is no longer a free pass for a bundle from disk
+> either — `install_checked(.., InstallOrigin::Local)` now returns
+> `NeedsConfirmation` instead of installing, and `--allow-commands` is the explicit yes.
+>
+> Evidence: Rust **128 → 149 tests** (trust 11, catalogue 8, net 11, updater 3, install 16), `cargo
+> clippy --all-targets -D warnings` clean, `cargo fmt` clean, `npm run check:signing` green. The tests
+> cover the threats the brief names: valid signature accepted, tampered bytes, wrong key, unknown key
+> id, unsigned and malformed envelopes, expiry, downgrade by date and by version, plain `http://`, an
+> oversized body, a hand-written override, a tampered override, a catalogue bundle that tries to run
+> `cmd.exe` (refused before the app store is touched), a local `command` bundle that needs the explicit
+> flag before it installs, and the line-ending guard that keeps the fixtures signable.
 
 ---
 

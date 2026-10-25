@@ -160,6 +160,19 @@ mod tests {
     }
 
     #[test]
+    fn the_signed_fixture_is_never_line_ending_converted() {
+        // `.gitattributes` pins this directory `-text`, because git's autocrlf
+        // had rewritten the JSON on the Windows runner: the signature stopped
+        // covering the bytes on disk and every signature test failed there
+        // only. Assert the property the attribute exists to guarantee.
+        let has_crlf = FIXTURE_CATALOG.windows(2).any(|window| window == b"\r\n");
+        assert!(
+            !has_crlf,
+            "tests/fixtures/catalog.json picked up CRLF: the signature no longer covers it"
+        );
+    }
+
+    #[test]
     fn loads_a_signed_catalogue_from_the_data_dir() {
         if std::env::var("NUCLEUS_CATALOG").is_ok() {
             return; // the env override legitimately takes precedence

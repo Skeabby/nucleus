@@ -49,8 +49,9 @@ stack**.
   embedded in the binary for rotation), the signature is checked **before the JSON is parsed**, and a
   catalogue that is unsigned, signed by an unknown key, tampered with, expired or older than the one
   already trusted is refused — the launcher keeps the last good one and says so. Downloads are
-  `https` only, an update is installed only when **you** click, and a downloaded bundle may only start
-  a relative `node` server, never an arbitrary command. The loop is in the box: `--pack`,
+  `https` only, an update is installed only when **you** click (an automatic update is opt-in, and it
+  is refused outright if the new manifest asks for different permissions), and a downloaded bundle may
+  only start a relative `node` server, never an arbitrary command. The loop is in the box: `--pack`,
   `--gen-catalog`, `tools/sign-catalog.mjs`, `--install-app` / `--uninstall-app`, and the Install /
   Update / Remove buttons in the UI.
 - **A native launcher, no Electron.** `launcher-rs/` is a single Rust binary  with manifest discovery, Open / Stop, grid and table views,

@@ -1,17 +1,27 @@
-name: Publish (rolling latest)
+name: Publish (latest & canary)
 
-# Builds the suite on every push to main (code + apps only — prose docs do
-# not trigger it) and republishes the rolling `latest` release:
+# Builds the suite when shipped code changes (launcher + apps + packages; prose
+# docs do not trigger it), then routes the result to one of two releases:
 #
-#   launcher-rs     cargo build → gen-catalog → cargo build (embed catalog)
-#   installers      make-setup (Inno Setup via choco, portable ZIP fallback)
-#   release         tag `latest` recreated with catalog.json + *.nucleusapp
-#                   + NucleusSetup-<v>-win64.exe (+ portable ZIP)
+#   push to main       → `canary` pre-release. No launcher reads `canary`, so
+#                        this can never reach a user, and it needs no key.
+#   push tag v*/apps-v* → rolling `latest`, signed catalogue, gated by the
+#                        `release` environment (required reviewer).
+#   workflow_dispatch  → same as a tag push.
+#
+# Pipeline per build:
+#
+#   build     cargo build → gen-catalog → cargo build (embed catalog)
+#             + make-setup (Inno Setup via choco, portable ZIP fallback)
+#   release   catalogue regenerated with --setup, signed, tag `latest`
+#             recreated with catalog.json + catalog.json.sig + *.nucleusapp
+#             + NucleusSetup-<v>-win64.exe (+ portable ZIP)
 #
 # Installed launchers point at releases/latest/download/catalog.json, so the
 # next start picks the new suite up automatically (see updater.rs): apps ship
 # updates when their manifest version bumps, the launcher when the workspace
-# version bumps.
+# version bumps. Since N1 they refuse any catalogue that is not Ed25519-signed,
+# which is why only the gated `release` job is allowed to publish.
 
 on:
   push:
@@ -24,25 +34,29 @@ on:
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/release.yml"
+    # Path filters are ignored for tag pushes, so these always build.
+    tags: ["v*", "apps-v*"]
+  workflow_dispatch:
 
+# Serialise per destination release: two tags publishing `latest` must queue,
+# never interleave their delete/recreate.
 concurrency:
-  group: publish-latest
-  cancel-in-progress: true
-
-permissions:
-  contents: write
+  group: publish-${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'canary' || 'latest' }}
+  # A canary build is disposable; a half-published `latest` is not.
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
 jobs:
-  publish:
+  # Build only: no secrets, no write access, so it can run unattended on main.
+  # The artifacts double as the hand-off to the canary/release jobs.
+  build:
     runs-on: windows-latest
-    env:
-      GH_TOKEN: ${{ github.token }}
-      REPO: Skeabby/nucleus
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Workspaces
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -51,8 +65,8 @@ jobs:
       - name: Gate (verify)
         run: npm run verify
 
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: launcher-rs
 
@@ -94,6 +108,8 @@ jobs:
             --gen-catalog launcher-rs\mirror\apps `
             --out launcher-rs\mirror\catalog.json `
             --base-url "https://github.com/$env:REPO/releases/latest/download/"
+        env:
+          REPO: Skeabby/nucleus
 
       - name: Launcher build (2/2 — embeds the catalogue)
         run: cargo build --release
@@ -104,6 +120,78 @@ jobs:
 
       - name: Installers (setup exe + portable zip)
         run: powershell -ExecutionPolicy Bypass -File scripts\make-setup.ps1
+
+      # The launcher exe is included because signing re-stamps the catalogue
+      # with the installer checksum (--setup) in the release job.
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: suite-build
+          path: |
+            dist/*
+            launcher-rs/mirror/catalog.json
+            launcher-rs/mirror/apps/*.nucleusapp
+            launcher-rs/target/release/nucleus-launcher.exe
+
+  # Every push to main. Deliberately unsigned: the key lives in the `release`
+  # environment, and no launcher ever reads `canary` (see updater.rs).
+  canary:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: suite-build
+          path: .
+
+      - name: Republish the canary pre-release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete canary --yes --cleanup-tag 2>$null
+          git push origin :refs/tags/canary 2>$null
+          $files = @(
+            Get-Item "dist\NucleusSetup-*win64.exe" -ErrorAction SilentlyContinue
+            Get-Item "dist\Nucleus-*-win64-portable.zip" -ErrorAction SilentlyContinue
+            Get-Item "launcher-rs\mirror\catalog.json"
+            Get-Item "launcher-rs\mirror\apps\*.nucleusapp"
+          ) | Where-Object { $_ } | ForEach-Object { $_.FullName }
+          if (-not $files) { throw "no release assets matched" }
+          gh release create canary --prerelease --target main `
+            --title "Nucleus Suite (canary)" `
+            --notes "Automated build of main ($(Get-Date -AsUTC -Format 'yyyy-MM-ddTHH:mm:ssZ')). Not signed and never read by launchers." `
+            @files
+
+  # Tag pushes and manual runs. `environment: release` requires a reviewer and
+  # holds NUCLEUS_CATALOG_KEY: add that secret to the `release` environment
+  # (not only to the repository) or this job cannot sign anything.
+  release:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    runs-on: windows-latest
+    environment: release
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: Skeabby/nucleus
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: suite-build
+          path: .
 
       # N1 — update trust. The catalogue that ships is re-generated now that the
       # installer exists, so its signed `launcher` block carries the setup's own
@@ -133,12 +221,6 @@ jobs:
           node tools/sign-catalog.mjs launcher-rs/mirror/catalog.json --key-env NUCLEUS_CATALOG_KEY --key-id 2026-a
           if ($LASTEXITCODE -ne 0) { throw "catalogue signing failed" }
           if (-not (Test-Path "launcher-rs\mirror\catalog.json.sig")) { throw "no signature produced" }
-
-      - name: Upload build artifacts (insurance)
-        uses: actions/upload-artifact@v4
-        with:
-          name: suite-build
-          path: dist/*
 
       - name: Republish the rolling latest release
         shell: pwsh

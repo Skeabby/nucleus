@@ -10,8 +10,8 @@ use std::time::Duration;
 use egui::{CentralPanel, Frame, Margin, RichText, Stroke, TopBottomPanel};
 
 use nucleus_launcher_core::{
-    AppStatus, Card, Catalog, LauncherRelease, TrustState, UpdatePolicy, derive_status, iso8601,
-    pending_delta,
+    AppStatus, Card, Catalog, LauncherRelease, Permission, TrustState, UpdatePolicy, derive_status,
+    iso8601, pending_delta,
 };
 
 use crate::discovery::Discovery;
@@ -68,7 +68,7 @@ pub struct LauncherApp {
     /// picked by name.
     launcher_release: Option<LauncherRelease>,
     /// Apps queued for install after the survey (only when the policy is auto).
-    auto_queue: VecDeque<String>,
+    auto_queue: VecDeque<(String, bool)>,
     /// Where the self-update installer is staged until it is run.
     pending_setup: Option<PathBuf>,
     /// N1: highest catalogue we ever accepted + the update policy.
@@ -180,6 +180,9 @@ impl LauncherApp {
     /// Queue every pending update, then start the first job. The rest drain
     /// through `auto_queue` as each job finishes, so two installs never write
     /// into the app store at once.
+    ///
+    /// These are queued as *explicit* updates (`false`): the click on the banner
+    /// is the consent, and a manifest that asks for new permissions is allowed.
     fn queue_all_updates(&mut self) {
         let ids = self.pending_updates();
         if ids.is_empty() {
@@ -188,14 +191,20 @@ impl LauncherApp {
         }
         let count = ids.len();
         for id in ids {
-            self.auto_queue.push_back(id);
+            self.auto_queue.push_back((id, false));
         }
         if self.jobs.is_busy() {
             self.log_line(format!("{count} update(s) queued"));
             return;
         }
-        if let Some(next) = self.auto_queue.pop_front() {
-            self.start_install(&next);
+        let next = self.auto_queue.pop_front();
+        self.start_queued(next);
+    }
+
+    /// Start the next queued install, keeping its origin (automatic or asked).
+    fn start_queued(&mut self, next: Option<(String, bool)>) {
+        if let Some((id, automatic)) = next {
+            self.start_install_with(&id, automatic);
         }
     }
 
@@ -254,11 +263,11 @@ impl LauncherApp {
         if self.trust.updates == UpdatePolicy::Auto {
             for id in refreshes {
                 self.log_line(format!("{id} update available — installing"));
-                self.auto_queue.push_back(id);
+                // `true`: this one is silent, so a permission change stops it.
+                self.auto_queue.push_back((id, true));
             }
-            if let Some(next) = self.auto_queue.pop_front() {
-                self.start_install(&next);
-            }
+            let next = self.auto_queue.pop_front();
+            self.start_queued(next);
         } else if !refreshes.is_empty() {
             self.log_line(format!(
                 "{} ready to update — open Updates to install",
@@ -403,14 +412,16 @@ impl LauncherApp {
                     } else {
                         rediscover = true;
                         // Silent updates: start the next queued refresh.
-                        if let Some(next) = self.auto_queue.pop_front() {
-                            self.start_install(&next);
-                        }
+                        let next = self.auto_queue.pop_front();
+                        self.start_queued(next);
                     }
                 }
                 JobEvent::Failed { id, message } => {
                     self.log_line(format!("{id} failed: {message}"));
                     self.job = None;
+                    // One bad archive must not stall the rest of the queue.
+                    let next = self.auto_queue.pop_front();
+                    self.start_queued(next);
                 }
                 JobEvent::Cancelled { id } => {
                     self.log_line(format!("{id} cancelled"));
@@ -438,8 +449,27 @@ impl LauncherApp {
         }
     }
 
-    /// Download (if needed) and install a catalogue app on a worker thread.
+    /// Download (if needed) and install a catalogue app on a worker thread,
+    /// because the user asked for it.
     fn start_install(&mut self, id: &str) {
+        self.start_install_with(id, false);
+    }
+
+    /// The permissions the installed build carries, so an automatic update can
+    /// see whether the new one asks for more (N1). `None` when nothing is
+    /// installed or the manifest cannot be read.
+    fn installed_permissions(&self, id: &str) -> Option<Vec<Permission>> {
+        let path = crate::paths::nucleus_data_dir()
+            .join("apps")
+            .join(id)
+            .join(crate::install::MANIFEST_FILE);
+        let text = std::fs::read_to_string(path).ok()?;
+        nucleus_launcher_core::parse_manifest(&text)
+            .ok()
+            .map(|manifest| manifest.permissions)
+    }
+
+    fn start_install_with(&mut self, id: &str, automatic: bool) {
         let Some(entry) = self
             .catalog
             .apps
@@ -460,6 +490,12 @@ impl LauncherApp {
         let dest = data_dir.join("cache").join(&entry.release_asset);
         let apps_root = data_dir.join("apps");
         let sha = entry.sha256.clone();
+        // Snapshot before the job: the worker cannot borrow `self`.
+        let installed_permissions = if automatic {
+            self.installed_permissions(id)
+        } else {
+            None
+        };
         let label = format!(
             "Install {}",
             entry.name.clone().unwrap_or_else(|| entry.id.clone())
@@ -491,12 +527,26 @@ impl LauncherApp {
             if ctx.is_cancelled() {
                 return Err("cancelled".into());
             }
+            // An automatic update is silent, so it may not widen what the app can
+            // do: a manifest that asks for different permissions waits for the
+            // user to click Update and see the change (N1).
+            if let Some(previous) = installed_permissions.as_deref() {
+                let next = crate::install::manifest_of(&dest)
+                    .map_err(|err| format!("reading {}: {err}", entry.release_asset))?;
+                if next.permissions != previous {
+                    return Err(format!(
+                        "{} asks for different permissions ({previous:?} -> {:?}) — update it from its card so you can approve the change",
+                        entry.id, next.permissions
+                    ));
+                }
+            }
             ctx.stage(Stage::Installing);
             crate::install::install_checked(
                 &dest,
                 &apps_root,
                 sha.as_deref(),
                 crate::install::InstallOrigin::Catalog,
+                false,
             )
             .map(|outcome| format!("installed {} {}", outcome.id, outcome.version))
             .map_err(|err| err.to_string())

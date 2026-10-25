@@ -216,12 +216,33 @@ function measureRust() {
     .map(([name, count]) => `${name} ${count}`)
     .join(" · ");
 
+  // The trust chain is the part of the suite a reviewer must be able to point
+  // at, so it gets its own number: every `trust::` test, plus the catalogue
+  // tests that prove what happens to a signed / unsigned / tampered file.
+  const trustTests = [];
+  const catalogueSignatureTests = [];
+  for (const raw of output.split("\n")) {
+    const match = /^test ([\w:]+) \.\.\. ok$/.exec(raw.trim());
+    if (!match) continue;
+    const name = match[1];
+    if (name.startsWith("trust::")) {
+      trustTests.push(name);
+    } else if (
+      name.startsWith("catalogue::tests::") &&
+      /signed|unsigned|tampered|unknown_key|line_ending/.test(name)
+    ) {
+      catalogueSignatureTests.push(name);
+    }
+  }
+  const trustChain = trustTests.length + catalogueSignatureTests.length;
+
   return [
     "### Rust (`launcher-rs/`)",
     "",
     "| Claim | Measured | Reproduce |",
     "|---|---|---|",
     `| Rust unit tests | **${total}** (${detail}) | \`cargo test --workspace\` |`,
+    `| Catalogue signature tests | **${trustChain}** (${trustTests.length} \`trust::\` · ${catalogueSignatureTests.length} signed/unsigned/tampered catalogue) | \`cargo test --workspace trust:: catalogue::\` |`,
     "",
     "The `Launcher (Rust)` workflow runs fmt, clippy (\`-D warnings\`), tests and a release build on",
     "every change under `launcher-rs/`; this section is diffed against it there.",
